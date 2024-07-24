@@ -2388,7 +2388,7 @@ static u32 aml_pci_ack_irq(struct aml_hw *aml_hw)
 
     if (aml_bus_type != PCIE_MODE) {
         buf_state = reg_val[0] & FW_BUFFER_STATUS;
-        if (buf_state && ((aml_hw->rx_buf_state & FW_BUFFER_STATUS) != (buf_state & FW_BUFFER_STATUS))) {
+        if (buf_state) {
             aml_hw->rx_buf_state &= ~FW_BUFFER_STATUS;
             if (buf_state & FW_BUFFER_NARROW) {
                 aml_hw->rx_buf_state |= buf_state | BUFFER_NARROW;

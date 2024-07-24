@@ -22,7 +22,7 @@
 #define BUFFER_NARROW           BIT(0)
 #define BUFFER_EXPAND           BIT(1)
 #define BUFFER_UPDATE_FLAG      BIT(2)
-#define BUFFER_NOTIFY           BIT(3)
+#define BUFFER_REDUCE_FINSH     BIT(3)
 #define BUFFER_WRAP             BIT(4)
 #define BUFFER_EXPEND_FINSH     BIT(5)
 #define BUFFER_TX_USED_FLAG     BIT(6)

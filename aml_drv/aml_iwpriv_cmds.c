@@ -1270,14 +1270,15 @@ static int aml_get_chan_list_info(struct net_device *dev)
     return 0;
 }
 
-static void aml_get_rx_regvalue(struct aml_plat *aml_plat)
+static void aml_get_rx_regvalue(struct aml_plat *aml_plat, union iwreq_data *wrqu, char *extra)
 {
     u32 rssi_indivaul = 0;
     u32 ba_rssi = 0;
+    u32 link_rssi = 0;
 
     rssi_indivaul = AML_REG_READ(aml_plat, AML_ADDR_MAC_PHY, REG_OF_SYNC_TWO_RSSI);
     ba_rssi       = AML_REG_READ(aml_plat, AML_ADDR_MAC_PHY, REG_OF_SYNC_RSSI);
-
+    link_rssi     = (AML_REG_READ(aml_plat, AML_ADDR_MAC_PHY, REG_OF_SYNC_RSSI) & 0xffff) - 256;
     printk("rx_end     :0x%x\n", AML_REG_READ(aml_plat, AML_ADDR_SYSTEM, 0xc06088));
     printk("frame_ok   :0x%x\n", AML_REG_READ(aml_plat, AML_ADDR_SYSTEM, 0xc06080));
     printk("frame_bad  :0x%x\n", AML_REG_READ(aml_plat, AML_ADDR_SYSTEM, 0xc06084));
@@ -1291,9 +1292,16 @@ static void aml_get_rx_regvalue(struct aml_plat *aml_plat)
     printk("SNR        :0x%x\n", AML_REG_READ(aml_plat, AML_ADDR_SYSTEM, 0xc0005c)&0xfff);
 
     //printk("data_avg_rssi: %d dBm\n", ((AML_REG_READ(aml_plat, AML_ADDR_MAC_PHY, REG_OF_SYNC_RSSI) & 0xffff0000) >> 16) - 256);
-    printk("Last RX Data RSSI  = %d %d \n", ((rssi_indivaul & 0xff000000) >> 24) - 256, ((rssi_indivaul & 0x00ff0000) >> 16)- 256);
-    printk("TX Response RSSI   = %d %d \n", ((ba_rssi & 0xff000000) >> 24) - 256, ((ba_rssi & 0x00ff0000) >> 16)- 256);
-    printk("Beacon RSSI        = %d %d \n", ((rssi_indivaul & 0x0000ff00) >> 8) - 256, (rssi_indivaul & 0x000000ff) - 256);
+    wrqu->data.length = scnprintf(extra, IW_PRIV_SIZE_MASK, "\nLast RX Data RSSI  = %d %d \n"
+        "TX Response RSSI   = %d %d \n"
+        "Beacon RSSI        = %d \n",
+        ((rssi_indivaul & 0xff000000) >> 24) - 256, ((rssi_indivaul & 0x00ff0000) >> 16)- 256,
+        ((ba_rssi & 0xff000000) >> 24) - 256, ((ba_rssi & 0x00ff0000) >> 16)- 256,
+        link_rssi);
+    wrqu->data.length++;
+    //printk("Last RX Data RSSI  = %d %d \n", ((rssi_indivaul & 0xff000000) >> 24) - 256, ((rssi_indivaul & 0x00ff0000) >> 16)- 256);
+    //printk("TX Response RSSI   = %d %d \n", ((ba_rssi & 0xff000000) >> 24) - 256, ((ba_rssi & 0x00ff0000) >> 16)- 256);
+    //printk("Beacon RSSI        = %d %d \n", ((rssi_indivaul & 0x0000ff00) >> 8) - 256, (rssi_indivaul & 0x000000ff) - 256);
 }
 
 static void aml_get_bcn_rssi(struct net_device *dev)
@@ -1307,10 +1315,10 @@ static void aml_get_bcn_rssi(struct net_device *dev)
     bcn_rssi = (AML_REG_READ(aml_plat, AML_ADDR_MAC_PHY, REG_OF_SYNC_RSSI) & 0xffff);
 
     printk("------------ rssi info ------------\n");
-    printk("bcn_rssi: %d dbm, (wf0: %d dbm, wf1: %d dbm) \n", bcn_rssi - 256, ((rssi_indivaul & 0x00ff0000) >> 16) - 256, ((rssi_indivaul & 0x0000ff00) >> 8) - 256);
+    printk("bcn_rssi: %d dbm, (wf0: %d dbm, wf1: %d dbm) \n", bcn_rssi - 256, ((rssi_indivaul & 0x0000ff00) >> 8) - 256, (rssi_indivaul & 0x000000ff) - 256);
 }
 
-static int aml_get_last_rx(struct net_device *dev)
+static int aml_get_last_rx(struct net_device *dev, union iwreq_data *wrqu, char *extra)
 {
     struct aml_vif *aml_vif = netdev_priv(dev);
     struct aml_hw *aml_hw = aml_vif->aml_hw;
@@ -1321,7 +1329,7 @@ static int aml_get_last_rx(struct net_device *dev)
         sta = aml_hw->sta_table + i;
         if (sta && sta->valid && (aml_vif->vif_index == sta->vif_idx)) {
             aml_print_last_rx_info(aml_hw, sta);
-            aml_get_rx_regvalue(aml_plat);
+            aml_get_rx_regvalue(aml_plat, wrqu, extra);
         }
     }
     return 0;
@@ -1550,14 +1558,34 @@ static int aml_get_buf_state(struct net_device *dev)
 {
     struct aml_vif *aml_vif = netdev_priv(dev);
     struct aml_hw *aml_hw = aml_vif->aml_hw;
+
+    if (aml_bus_type == PCIE_MODE) {
+        printk("invalid cmd\n");
+        return -1;
+    }
+    printk("=============================\n");
+    if (aml_hw->la_enable) {
+        printk("la status:       ON\n");
+    } else {
+        printk("la status:       OFF\n");
+    }
+
+    if (aml_bus_type == USB_MODE) {
+        if (aml_hw->trace_enable) {
+            printk("trace status:    ON\n");
+        } else {
+            printk("trace status:    OFF\n");
+        }
+    }
+
     if (aml_hw->rx_buf_state & FW_BUFFER_EXPAND) {
-        printk("rxbuf: 256k, txbuf: 128k\n");
+        printk("trx status:      rxbuf large, txbuf small\n");
     } else if (aml_hw->rx_buf_state & FW_BUFFER_NARROW) {
-        printk("rxbuf: 128k, txbuf: 256k\n");
+        printk("trx status:      rxbuf small, txbuf large\n");
     } else {
         printk("err: rx_buf_state[%x]\n", aml_hw->rx_buf_state);
     }
-
+    printk("=============================\n");
     return 0;
 }
 
@@ -3652,34 +3680,39 @@ int aml_emb_la_capture(struct net_device *dev, int bus1, int bus2)
 
 }
 
-int aml_emb_la_enable(struct net_device *dev)
+int aml_emb_la_enable(struct net_device *dev, int enable)
 {
     struct aml_vif *aml_vif = netdev_priv(dev);
     struct aml_hw *aml_hw = aml_vif->aml_hw;
-    int enable  = 1;
 
-    if (aml_hw->la_enable) {
-        AML_INFO("la had enable!");
-        return 0;
-    }
-
-    if (aml_bus_type == USB_MODE && aml_hw->trace_enable) {
-        AML_INFO("usb trace is enable, la is forbidden!");
+    if (aml_bus_type == PCIE_MODE) {
+        printk("invalid cmd\n");
         return -1;
     }
 
-    if (!(aml_hw->rx_buf_state & BUFFER_TX_USED_FLAG)) {
-        aml_send_set_buf_state_req(aml_hw, BUFFER_RX_FORCE_REDUCE);
+    if (enable != 0 && enable != 1) {
+        AML_INFO("param error:%d\n",  enable);
+        return -1;
     }
 
-    while (!(aml_hw->rx_buf_state & BUFFER_TX_USED_FLAG)) {
-        usleep_range(2,3);
+    if (aml_bus_type == USB_MODE && aml_hw->trace_enable) {
+        AML_INFO("usb trace is enable, usb la is forbidden!");
+        return -1;
     }
 
-    if (aml_hw->rx_buf_state & BUFFER_TX_USED_FLAG) {
-        _aml_set_la_enable(aml_hw,enable);
-        aml_hw->la_enable = 1;
+    if (enable == aml_hw->la_enable) {
+        AML_INFO("The set la status is consistent with the current la status, Do nothing!");
+        return -1;
     }
+
+    if (aml_hw->rx_buf_state & BUFFER_STATUS) {
+        AML_INFO("During dynamic buf switch, please try again later");
+        return -1;
+    }
+
+    _aml_set_la_enable(aml_hw, enable);
+    aml_hw->la_enable = enable;
+
     return 0;
 }
 
@@ -4136,37 +4169,39 @@ static int aml_pcie_lp_switch(struct net_device *dev, int status)
     return ret;
 }
 
-int aml_set_usb_trace_enable(struct net_device *dev)
+int aml_set_usb_trace_enable(struct net_device *dev, int enable)
 {
     struct aml_vif *aml_vif = netdev_priv(dev);
     struct aml_hw *aml_hw = aml_vif->aml_hw;
-    int trace_enable  = 1;
 
-    if (aml_hw->trace_enable) {
-        AML_INFO("usb trace had enable!");
-        return 0;
+    if (aml_bus_type != USB_MODE) {
+        printk("invalid cmd\n");
+        return -1;
     }
 
-    if (aml_bus_type == USB_MODE) {
-        if (aml_hw->la_enable) {
-            AML_INFO("usb la is enable, usb trace is forbidden!");
-            return -1;
-        }
-        if (!(aml_hw->rx_buf_state & BUFFER_TX_USED_FLAG)) {
-            aml_send_set_buf_state_req(aml_hw, BUFFER_RX_FORCE_REDUCE);
-        }
-
-        while (!(aml_hw->rx_buf_state & BUFFER_TX_USED_FLAG)) {
-            usleep_range(2,3);
-        }
-
-        if (aml_hw->rx_buf_state & BUFFER_TX_USED_FLAG) {
-            _aml_set_usb_trace_enable(aml_hw, trace_enable);
-            aml_hw->trace_enable = 1;
-        }
-    } else {
-        AML_INFO("not support cmd!");
+    if (enable != 0 && enable != 1) {
+        AML_INFO("param error:%d\n",  enable);
+        return -1;
     }
+
+    if (aml_hw->la_enable) {
+        AML_INFO("usb la is enable, usb trace is forbidden!");
+        return -1;
+    }
+
+    if (enable == aml_hw->trace_enable) {
+        AML_INFO("The set trace status is consistent with the current trace status, do nothing!");
+        return -1;
+    }
+
+    if (aml_hw->rx_buf_state & BUFFER_STATUS) {
+        AML_INFO("During dynamic buf switch, please try again later");
+        return -1;
+    }
+
+    _aml_set_usb_trace_enable(aml_hw, enable);
+    aml_hw->trace_enable = enable;
+
     return 0;
 }
 
@@ -4332,6 +4367,20 @@ void aml_set_wifi_mac_addr(struct net_device *dev, char* arg_iw)
     } else {
         printk("Wifi mac has been written\n");
     }
+}
+
+static int aml_set_tcp_tcp_ack_window_scaling(struct net_device *dev, int win_scal)
+{
+    struct aml_vif *aml_vif = netdev_priv(dev);
+    struct aml_hw * aml_hw = aml_vif->aml_hw;
+    struct aml_tcp_sess_mgr *ack_mgr = &aml_hw->ack_mgr;
+    if (win_scal >= 15 || win_scal < 0 ) {
+        printk("ERR:The parameter must be in range 0 -- 15\n");
+        return 0;
+    }
+    ack_mgr->window_scaling = win_scal;;
+    printk("set tcp ack:window_scaling=%x\n", ack_mgr->window_scaling);
+    return 0;
 }
 
 int aml_get_mac_addr(struct net_device *dev,union iwreq_data *wrqu, char *extra)
@@ -4793,9 +4842,18 @@ static int aml_iwpriv_send_para1(struct net_device *dev,
         case AML_IWP_SET_PUTV_TRACE_SWITCH:
             aml_set_putv_trace_switch_cmd(dev, set1);
             break;
+        case AML_IWP_LA_ENABLE:
+            aml_emb_la_enable(dev, set1);
+            break;
+        case AML_IWP_USB_TRACE_ENABLE:
+            aml_set_usb_trace_enable(dev, set1);
+            break;
         case AML_IWP_ENABLE_RSSI_REG:
             aml_enable_rssi_reg(dev, set1);
             break;
+        case AML_IWP_SET_TCP_ACK_WINDOW_SCALE:
+             aml_set_tcp_tcp_ack_window_scaling(dev, set1);
+             break;
         default:
             printk("%s %d: param err\n", __func__, __LINE__);
             break;
@@ -4960,9 +5018,6 @@ static int aml_iwpriv_get(struct net_device *dev,
         case AML_IWP_GET_TX_LFT:
             aml_get_tx_lft(dev);
             break;
-        case AML_IWP_GET_LAST_RX:
-            aml_get_last_rx(dev);
-            break;
         case AML_IWP_CLEAR_LAST_RX:
             aml_clear_last_rx(dev);
             break;
@@ -5006,12 +5061,6 @@ static int aml_iwpriv_get(struct net_device *dev,
             break;
         case AML_IWP_GET_TCP_DELAY_ACK_INFO:
             aml_get_tcp_ack_info(dev);
-            break;
-        case AML_IWP_LA_ENABLE:
-            aml_emb_la_enable(dev);
-            break;
-        case AML_IWP_USB_TRACE_ENABLE:
-            aml_set_usb_trace_enable(dev);
             break;
         case AML_IWP_STOP_DC_TONE:
             aml_stop_dc_tone(dev);
@@ -5111,6 +5160,9 @@ static int aml_iwpriv_get_char(struct net_device *dev,
         case AML_IWP_GET_EFUSE_VENDOR_SN:
             aml_get_efuse_vendor_sn(dev, wrqu, extra);
             break;
+        case AML_IWP_GET_LAST_RX:
+            aml_get_last_rx(dev, wrqu, extra);
+            break;
         default:
             break;
     }
@@ -5207,9 +5259,6 @@ static const struct iw_priv_args aml_iwpriv_private_args[] = {
         AML_IWP_GET_TX_LFT,
         0, IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 1, "get_tx_lft"},
     {
-        AML_IWP_GET_LAST_RX,
-        0, IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 1, "get_last_rx"},
-    {
         AML_IWP_GET_BCN_RSSI,
         0, IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 1, "get_bcn_rssi"},
     {
@@ -5254,12 +5303,6 @@ static const struct iw_priv_args aml_iwpriv_private_args[] = {
     {
         AML_IWP_GET_TCP_DELAY_ACK_INFO,
         0, IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 1, "get_tcp_info"},
-    {
-        AML_IWP_LA_ENABLE,
-        0, IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 1, "la_enable"},
-    {
-        AML_IWP_USB_TRACE_ENABLE,
-        0, IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 1, "usb_trace_en"},
     {
         AML_IWP_STOP_DC_TONE,
         0, IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 1, "stop_dc_tone"},
@@ -5397,6 +5440,15 @@ static const struct iw_priv_args aml_iwpriv_private_args[] = {
         AML_IWP_ENABLE_RSSI_REG,
         IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 1, 0, "enable_two_ant_rssi"},
     {
+        AML_IWP_LA_ENABLE,
+        IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 1, 0, "la_enable"},
+    {
+        AML_IWP_USB_TRACE_ENABLE,
+        IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 1, 0, "usb_trace_en"},
+    {
+        AML_IWP_SET_TCP_ACK_WINDOW_SCALE,
+        IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 1, 0, "set_tcp_ack_ws"},
+    {
         SIOCIWFIRSTPRIV + 2,
         IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 2, 0, ""},
     {
@@ -5500,6 +5552,9 @@ static const struct iw_priv_args aml_iwpriv_private_args[] = {
     {
         AML_IWP_GET_ALL_EFUSE,
         IW_PRIV_TYPE_CHAR | IW_PRIV_SIZE_MASK, IW_PRIV_TYPE_CHAR | IW_PRIV_SIZE_MASK, "get_all_efuse"},
+    {
+        AML_IWP_GET_LAST_RX,
+        IW_PRIV_TYPE_CHAR | IW_PRIV_SIZE_MASK, IW_PRIV_TYPE_CHAR | IW_PRIV_SIZE_MASK, "get_last_rx"},
     {
         AML_IWP_GET_XOSC_EFUSE_TIMES,
         IW_PRIV_TYPE_CHAR | IW_PRIV_SIZE_MASK, IW_PRIV_TYPE_CHAR | IW_PRIV_SIZE_MASK, "get_xosc_times"},

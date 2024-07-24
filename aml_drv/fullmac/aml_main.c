@@ -781,7 +781,7 @@ static void aml_csa_finish(struct work_struct *ws)
             aml_txq_vif_stop(vif, AML_TXQ_STOP_CHAN, aml_hw);
         spin_unlock_bh(&aml_hw->cb_lock);
 #ifdef CFG80211_SINGLE_NETDEV_MULTI_LINK_SUPPORT
-#if ((defined (AML_KERNEL_VERSION) && AML_KERNEL_VERSION >= 15) || LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 153))
+#if ((defined (AML_KERNEL_VERSION) && AML_KERNEL_VERSION >= 15) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
         cfg80211_ch_switch_notify(vif->ndev, &csa->chandef, 0, 0);
 #else
         cfg80211_ch_switch_notify(vif->ndev, &csa->chandef, 0);
@@ -2208,6 +2208,10 @@ static int aml_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev,
 
     if (!aml_vif->sta.ap) {
         AML_INFO("error,sta.ap is null");
+    }
+
+    if ((aml_recy != NULL) && (aml_vif->vif_index == aml_recy->assoc_info.vif_idx)) {
+        aml_recy_flags_clr(AML_RECY_ASSOC_INFO_SAVED);
     }
 
     if (aml_vif->sta.ap && aml_vif->sta.ap->valid) {
@@ -3834,7 +3838,7 @@ static int aml_cfg80211_channel_switch(struct wiphy *wiphy,
         INIT_WORK(&csa->work, aml_csa_finish);
 #ifndef CONFIG_PT_MODE
     #ifdef CFG80211_SINGLE_NETDEV_MULTI_LINK_SUPPORT
-        #if ((defined (AML_KERNEL_VERSION) && AML_KERNEL_VERSION >= 15) || LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 153))
+        #if ((defined (AML_KERNEL_VERSION) && AML_KERNEL_VERSION >= 15) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
         cfg80211_ch_switch_started_notify(dev, &csa->chandef, 0, params->count, params->block_tx, 0);
         #else
         cfg80211_ch_switch_started_notify(dev, &csa->chandef, 0, params->count, params->block_tx);
@@ -5986,9 +5990,7 @@ static void aml_reg_notifier(struct wiphy *wiphy,
     AML_INFO("initiator=%d, hint_type=%d, alpha=%s, region=%d\n",
             request->initiator, request->user_reg_hint_type,
             request->alpha2, request->dfs_region);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0)
-    aml_apply_regdom(aml_hw, wiphy, request->alpha2);
-#endif
+
     // For now trust all initiator
     aml_radar_set_domain(&aml_hw->radar, request->dfs_region);
     aml_send_me_chan_config_req(aml_hw);

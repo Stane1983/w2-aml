@@ -1899,6 +1899,32 @@ void aml_rx_datarate_monitor(struct rx_desc_head *desc_stat)
 
 }
 
+void aml_dynamic_update_tx_page(struct aml_hw *aml_hw)
+{
+    spin_lock_bh(&aml_hw->tx_buf_lock);
+    if (aml_hw->rx_buf_state & BUFFER_EXPAND) {
+        aml_hw->g_tx_param.tx_page_free_num = (aml_bus_type == SDIO_MODE) ? SDIO_TX_PAGE_NUM_SMALL : USB_TX_PAGE_NUM_SMALL;
+    } else if (aml_hw->rx_buf_state & BUFFER_NARROW) {
+        if (aml_bus_type == SDIO_MODE) {
+            if (aml_hw->la_enable) {
+                aml_hw->g_tx_param.tx_page_free_num = (SDIO_TX_PAGE_NUM_LARGE - SDIO_LA_PAGE_NUM);
+            } else {
+                aml_hw->g_tx_param.tx_page_free_num = SDIO_TX_PAGE_NUM_LARGE;
+            }
+        } else if (aml_bus_type == USB_MODE) {
+            if (aml_hw->la_enable) {
+                aml_hw->g_tx_param.tx_page_free_num = (USB_TX_PAGE_NUM_LARGE - USB_LA_PAGE_NUM);
+            } else if (aml_hw->trace_enable) {
+                aml_hw->g_tx_param.tx_page_free_num = (USB_TX_PAGE_NUM_LARGE - USB_TRACE_PAGE_NUM);
+            } else {
+                aml_hw->g_tx_param.tx_page_free_num = USB_TX_PAGE_NUM_LARGE;
+            }
+        }
+    }
+    aml_hw->g_tx_param.tx_page_tot_num = aml_hw->g_tx_param.tx_page_free_num;
+    spin_unlock_bh(&aml_hw->tx_buf_lock);
+}
+
 extern uint8_t rx_need_update;
 extern struct crg_msc_cbw *g_cmd_buf;
 
@@ -1920,27 +1946,21 @@ void aml_trigger_rst_rxd(struct aml_hw *aml_hw, uint32_t addr_rst)
             if (aml_bus_type == SDIO_MODE)
                 AML_REG_WRITE(RXBUF_START_ADDR & 0x1FFFF, aml_hw->plat, 0, RG_WIFI_IF_FW2HST_IRQ_CFG);
         }
-        free_page_tot_num = (aml_bus_type == SDIO_MODE) ? SDIO_TX_PAGE_NUM_LARGE : USB_TX_PAGE_NUM_LARGE;
-        aml_hw->g_tx_param.tx_page_tot_num = free_page_tot_num;
+        aml_dynamic_update_tx_page(aml_hw);
         addr_rst |= RX_REDUCE_READ_RX_DATA_FINSH;
         AML_INFO("reduce last_addr = %x, addr_rst = %x", last_addr, addr_rst);
     }
 
-    if (aml_hw->rx_buf_state & BUFFER_NOTIFY) {
+    if (aml_hw->rx_buf_state & BUFFER_REDUCE_FINSH) {
         /* Host rx reduce had finshed, notify the firmware */
         addr_rst |= HOST_RXBUF_REDUCE_FINSH;
         AML_INFO("reduce finsh last_addr = %x, addr_rst = %x", last_addr, addr_rst);
-        aml_hw->rx_buf_state &= ~BUFFER_NOTIFY;
+        aml_hw->rx_buf_state &= ~BUFFER_REDUCE_FINSH;
     }
 
     if ((aml_hw->rx_buf_state & BUFFER_STATUS) && (aml_hw->rx_buf_state & BUFFER_EXPAND)) {
         /* Host had read away all the data before hw_wr addr, update host tx_page_free_num */
-        max_dyna_num = (aml_bus_type == SDIO_MODE) ? SDIO_DYNA_PAGE_NUM : USB_DYNA_PAGE_NUM;
-        spin_lock_bh(&aml_hw->tx_buf_lock);
-        aml_hw->g_tx_param.tx_page_free_num -= max_dyna_num;
-        spin_unlock_bh(&aml_hw->tx_buf_lock);
-        free_page_tot_num = (aml_bus_type == SDIO_MODE) ? SDIO_TX_PAGE_NUM_SMALL : USB_TX_PAGE_NUM_SMALL;
-        aml_hw->g_tx_param.tx_page_tot_num = free_page_tot_num;
+        aml_dynamic_update_tx_page(aml_hw);
         addr_rst |= RX_ENLARGE_READ_RX_DATA_FINSH;
         AML_INFO("expend last_addr = %x, addr_rst = %x", last_addr, addr_rst);
     }
@@ -1950,7 +1970,6 @@ void aml_trigger_rst_rxd(struct aml_hw *aml_hw, uint32_t addr_rst)
         addr_rst |= HOST_RXBUF_ENLARGE_FINSH;
         AML_INFO("expend finsh last_addr = %x, addr_rst = %x", last_addr, addr_rst);
         aml_hw->rx_buf_state &= ~BUFFER_EXPEND_FINSH;
-        aml_hw->rx_buf_state &= ~BUFFER_TX_USED_FLAG;
     }
 
     cmd_buf[0] = 1;
@@ -1984,13 +2003,15 @@ void aml_trigger_rst_rxd(struct aml_hw *aml_hw, uint32_t addr_rst)
 
 void aml_sdio_dynamic_buffer_check(struct aml_hw *aml_hw, struct rxbuf_list *rxbuf_list)
 {
-    if ((aml_hw->rx_buf_state & BUFFER_STATUS) && !aml_hw->la_enable && !aml_hw->trace_enable) {
+    if (aml_hw->rx_buf_state & BUFFER_STATUS) {
         if (aml_hw->rx_buf_state & BUFFER_NARROW) {
             printk("%s,%d:reduce fw_new_pos=%x, fw_buf_pos=%x\n", __func__, __LINE__,
                        (aml_hw->fw_new_pos & ~AML_WRAP), (aml_hw->fw_buf_pos & ~AML_WRAP));
 
             if ((aml_hw->rx_buf_state & BUFFER_UPDATE_FLAG) == 0) {
                 aml_hw->rx_buf_state |= BUFFER_UPDATE_FLAG;
+                rxbuf_list->rx_buf_end = aml_hw->rx_buf_end;
+                rxbuf_list->rx_buf_len = aml_hw->rx_buf_len;
                 return;
             }
             if (aml_bus_type == SDIO_MODE) {
@@ -2005,25 +2026,35 @@ void aml_sdio_dynamic_buffer_check(struct aml_hw *aml_hw, struct rxbuf_list *rxb
             }
             aml_hw->rx_buf_state &= ~(BUFFER_STATUS);
             aml_hw->rx_buf_state &= ~(BUFFER_UPDATE_FLAG);
-            aml_hw->rx_buf_state |= BUFFER_NOTIFY;
+            aml_hw->rx_buf_state |= BUFFER_REDUCE_FINSH;
             printk("%s,%d:reduce_finsh rx_buf_state = %x\n", __func__, __LINE__, aml_hw->rx_buf_state);
         } else if (aml_hw->rx_buf_state & BUFFER_EXPAND) {
             printk("%s,%d:expend fw_new_pos=%x, fw_buf_pos=%x\n", __func__, __LINE__,
                 (aml_hw->fw_new_pos & ~AML_WRAP), (aml_hw->fw_buf_pos & ~AML_WRAP));
             if ((aml_hw->rx_buf_state & BUFFER_UPDATE_FLAG) == 0) {
                 aml_hw->rx_buf_state |= BUFFER_UPDATE_FLAG;
+                rxbuf_list->rx_buf_end = aml_hw->rx_buf_end;
+                rxbuf_list->rx_buf_len = aml_hw->rx_buf_len;
                 return;
             }
 
             if (aml_bus_type == SDIO_MODE) {
-                aml_hw->rx_buf_end = RXBUF_END_ADDR_LARGE;
-                aml_hw->rx_buf_len = RX_BUFFER_LEN_LARGE;
+                aml_hw->rx_buf_end = (aml_hw->la_enable) ? RXBUF_END_ADDR_LA_LARGE : RXBUF_END_ADDR_LARGE;
+                aml_hw->rx_buf_len = (aml_hw->la_enable) ? RX_BUFFER_LEN_LA_LARGE : RX_BUFFER_LEN_LARGE;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0) // template solution for S905L3A
                 aml_rps_switch_check(aml_hw, RPS_OFF);
 #endif
             } else{
-                aml_hw->rx_buf_end = USB_RXBUF_END_ADDR_LARGE;
-                aml_hw->rx_buf_len = USB_RX_BUFFER_LEN_LARGE;
+                if (aml_hw->la_enable) {
+                    aml_hw->rx_buf_end = USB_RXBUF_END_ADDR_LA_LARGE;
+                    aml_hw->rx_buf_len = USB_RX_BUFFER_LEN_LA_LARGE;
+                } else if (aml_hw->trace_enable) {
+                    aml_hw->rx_buf_end = USB_RXBUF_END_ADDR_TRACE_LARGE;
+                    aml_hw->rx_buf_len = USB_RX_BUFFER_LEN_TRACE_LARGE;
+                } else {
+                    aml_hw->rx_buf_end = USB_RXBUF_END_ADDR_LARGE;
+                    aml_hw->rx_buf_len = USB_RX_BUFFER_LEN_LARGE;
+                }
             }
 
             aml_hw->rx_buf_state &= ~(BUFFER_STATUS);
@@ -2091,7 +2122,11 @@ s8 aml_sdio_rxdataind(void *pthis, void *arg)
     REG_SW_SET_PROFILING(aml_hw, SW_PROF_AMLDATAIND);
 
     while (list_empty(&aml_hw->rxbuf_free_list)) {
-        return result;
+        if (aml_hw->rx_buf_state & BUFFER_STATUS) {
+            usleep_range(2, 3);
+        } else {
+            return result;
+        }
     }
 
     if (aml_hw->fw_buf_pos != aml_hw->fw_new_pos) {

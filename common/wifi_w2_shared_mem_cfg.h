@@ -41,12 +41,15 @@ LA ON: rx buffer large size 0x30000, small size: 0x20000
 #define TXBUF_START_ADDR                 (0x60040000)
 #define RXBUF_END_ADDR_SMALL             (0x60040000)
 #define RXBUF_END_ADDR_LARGE             (0x60069800)
+#define RXBUF_END_ADDR_LA_LARGE          (0x60059400) // 101 PAGE
 
 #define USB_TXBUF_START_ADDR                 (0x60029130)
 #define USB_RXBUF_END_ADDR_SMALL             (0x60029130)
 
 #if defined (USB_TX_USE_LARGE_PAGE) || defined (CONFIG_AML_USB_LARGE_PAGE)
 #define USB_RXBUF_END_ADDR_LARGE             (0x600684b0) // tx end 0x6007ff6c
+#define USB_RXBUF_END_ADDR_LA_LARGE          (0x600575c0) // rx small + 41 tx page
+#define USB_RXBUF_END_ADDR_TRACE_LARGE       (0x6005f430) // rx small + 48 tx page
 #else
 #define USB_RXBUF_END_ADDR_LARGE             (0x60067788) // tx end 0x6007fcc0
 #endif
@@ -66,9 +69,13 @@ LA ON: rx buffer large size 0x30000, small size: 0x20000
 //sdio
 #define RX_BUFFER_LEN_SMALL              (RXBUF_END_ADDR_SMALL - RXBUF_START_ADDR)
 #define RX_BUFFER_LEN_LARGE              (RXBUF_END_ADDR_LARGE - RXBUF_START_ADDR)
+#define RX_BUFFER_LEN_LA_LARGE           (RXBUF_END_ADDR_LA_LARGE - RXBUF_START_ADDR)
+
 //usb
 #define USB_RX_BUFFER_LEN_SMALL              (USB_RXBUF_END_ADDR_SMALL - RXBUF_START_ADDR)
 #define USB_RX_BUFFER_LEN_LARGE              (USB_RXBUF_END_ADDR_LARGE - RXBUF_START_ADDR)
+#define USB_RX_BUFFER_LEN_LA_LARGE           (USB_RXBUF_END_ADDR_LA_LARGE - RXBUF_START_ADDR)
+#define USB_RX_BUFFER_LEN_TRACE_LARGE        (USB_RXBUF_END_ADDR_TRACE_LARGE - RXBUF_START_ADDR)
 
 #define SDIO_USB_EXTEND_E2A_IRQ_STATUS CMD_DOWN_FIFO_FDN_ADDR
 
@@ -94,6 +101,9 @@ struct sdio_buffer_control
     unsigned int buffer_status;
     unsigned int hwwr_switch_addr;
 
+#ifdef USB
+    bool     traffic_busy;
+#endif
     bool     txdesp_rehandle;
     uint8_t  txdesp_rehandle_page_idx;
     uint8_t  free_page_cnt;
@@ -103,6 +113,7 @@ struct sdio_buffer_control
     uint16_t tot_page_num;
     uint32_t occupy_buffer;
     uint32_t last_new_read;
+    uint8_t  usb_trace_enable;
 };
 extern struct sdio_buffer_control sdio_buffer_ctrl;
 
@@ -110,17 +121,18 @@ extern struct sdio_buffer_control sdio_buffer_ctrl;
 #define BUFFER_RX_USED             BIT(1)
 #define BUFFER_TX_NEED_ENLARGE     BIT(2)
 #define BUFFER_RX_NEED_ENLARGE     BIT(3)
-#define BUFFER_RX_REDUCED          BIT(4)
-#define BUFFER_RX_HOST_NOTIFY      BIT(5)
+#define BUFFER_RX_WAIT_READ_DATA   BIT(4)
+#define BUFFER_TX_STOP_FLAG        BIT(5)
 #define BUFFER_RX_REDUCE_FLAG      BIT(6)
-#define BUFFER_RX_ENLARGE_FINSH    BIT(7)
+#define BUFFER_RX_ENLARGE_FLAG     BIT(7)
 #define BUFFER_RX_FORCE_REDUCE     BIT(8)
 #define BUFFER_RX_FORCE_ENLARGE    BIT(9)
 #define BUFFER_RX_FORBID_REDUCE    BIT(10)
 #define BUFFER_RX_FORBID_ENLARGE   BIT(11)
-#define BUFFER_RX_WAIT_READ_DATA   BIT(12)
-#define BUFFER_TX_STOP_FLAG        BIT(13)
-#define BUFFER_RX_ENLARGE_FLAG     BIT(14)
+#define BUFFER_LA_USED             BIT(12)
+#define BUFFER_TRACE_USED          BIT(13)
+#define BUFFER_LA_FREE             BIT(14)
+#define BUFFER_TRACE_FREE          BIT(15)
 
 #define RX_ENLARGE_READ_RX_DATA_FINSH BIT(25)
 #define HOST_RXBUF_ENLARGE_FINSH      BIT(26)

@@ -1,4 +1,4 @@
-AML_VERS_NUM=v1.9.4_2024-07.02-w2 driver:8bf3f356211a43867f238ea8ace612a6e4bd92f0
+AML_VERS_NUM=v1.9.5_2024-07.24-w2 driver:f0c9b9975f264b1cb39ce3bd4585e50cd79e7611
 #KERNELDIR=/usr/lib/modules/5.8.0-63-generic/build
 PWD=$(shell pwd)
 ifeq ($(ARCH),)
@@ -82,6 +82,9 @@ CONFIG_AML_FPGA_PCIE ?= n
 
 # Amlogic specified android(/w Kernel) platform depends
 CONFIG_AML_PLATFORM_ANDROID ?= y
+
+# Use platform random mac
+CONFIG_AML_PLATFORM_RANDOM_MAC ?= n
 
 # Support to use preallocing static buffer for wlan driver reloadable
 CONFIG_AML_PREALLOC_BUF_STATIC ?= y

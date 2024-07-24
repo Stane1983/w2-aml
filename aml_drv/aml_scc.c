@@ -364,7 +364,7 @@ void aml_scc_csa_finish(struct work_struct *ws)
             aml_txq_vif_stop(vif, AML_TXQ_STOP_CHAN, aml_hw);
         spin_unlock_bh(&aml_hw->cb_lock);
 #ifdef CFG80211_SINGLE_NETDEV_MULTI_LINK_SUPPORT
-        #if ((defined (AML_KERNEL_VERSION) && AML_KERNEL_VERSION >= 15) || LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 153))
+        #if ((defined (AML_KERNEL_VERSION) && AML_KERNEL_VERSION >= 15) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
         cfg80211_ch_switch_notify(vif->ndev, &csa->chandef, 0, 0);
         #else
         cfg80211_ch_switch_notify(vif->ndev, &csa->chandef, 0);
@@ -663,7 +663,7 @@ static int aml_scc_channel_switch(struct aml_hw *aml_hw, struct aml_vif *vif, st
         INIT_WORK(&csa->work, aml_scc_csa_finish);
 #ifndef CONFIG_PT_MODE
     #ifdef CFG80211_SINGLE_NETDEV_MULTI_LINK_SUPPORT
-        #if ((defined (AML_KERNEL_VERSION) && AML_KERNEL_VERSION >= 15) || LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 153))
+        #if ((defined (AML_KERNEL_VERSION) && AML_KERNEL_VERSION >= 15) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
         cfg80211_ch_switch_started_notify(dev, &csa->chandef, 0, CSA_COUNT, CSA_BLOCK_TX, 0);
         #else
         cfg80211_ch_switch_started_notify(dev, &csa->chandef, 0, CSA_COUNT, CSA_BLOCK_TX);
@@ -729,6 +729,12 @@ void aml_scc_check_chan_conflict(struct aml_hw *aml_hw)
                     AML_INFO("init band conflict with target band [%d %d]\n", aml_scc_get_init_band(), target_chdef.chan->band);
                     break;
                 }
+
+                if (target_chdef.chan->flags & IEEE80211_CHAN_RADAR) {
+                    AML_INFO("target is radar chan");
+                    break;
+                }
+
                 AML_INFO("chan %d,bw:%s --> chan %d,bw:%s ",
                     aml_ieee80211_freq_to_chan(cur_chdef.chan->center_freq, cur_chdef.chan->band),
                     chan_width_trace[cur_chdef.width],
@@ -754,7 +760,7 @@ void aml_scc_check_chan_conflict(struct aml_hw *aml_hw)
                                 aml_chanctx_unlink(vif);
                                 aml_chanctx_link(vif, target_vif->ch_index, &target_chdef);
                                 #ifdef CFG80211_SINGLE_NETDEV_MULTI_LINK_SUPPORT
-                                #if ((defined (AML_KERNEL_VERSION) && AML_KERNEL_VERSION >= 15) || LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 153))
+                                #if ((defined (AML_KERNEL_VERSION) && AML_KERNEL_VERSION >= 15) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
                                 cfg80211_ch_switch_notify(vif->ndev, &target_chdef, 0, 0);
                                 #else
                                 cfg80211_ch_switch_notify(vif->ndev, &target_chdef, 0);

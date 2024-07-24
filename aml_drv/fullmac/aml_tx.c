@@ -2073,8 +2073,6 @@ int aml_tx_cfm_task(void *data)
     struct txdesc_host *txdesc_host = NULL;
     unsigned char  page_num = 0;
     struct sched_param sch_param;
-    u16 dyna_page = 0;
-    u16 max_dyna_num;
     uint32_t sp_ret = 0;
 
     sch_param.sched_priority = 91;
@@ -2113,7 +2111,6 @@ int aml_tx_cfm_task(void *data)
 #ifdef CONFIG_AML_SPLIT_TX_BUF
             cfm.amsdu_size = cfm_data.amsdu_size;
 #endif
-            dyna_page = cfm_data.dyna_page;
             cfm.status.value = (u32)cfm_data.status.value;
             cfm.hostid = (u32_l)cfm_data.hostid;
             skb = ipc_host_tx_host_id_to_ptr_for_sdio_usb(aml_hw->ipc_env, cfm.hostid);
@@ -2167,17 +2164,6 @@ int aml_tx_cfm_task(void *data)
             cfmlog.cfm_page += page_num;
 #endif
 #endif
-
-            max_dyna_num = (aml_bus_type == SDIO_MODE) ? SDIO_DYNA_PAGE_NUM : USB_DYNA_PAGE_NUM;
-            if (dyna_page == max_dyna_num) {
-                aml_hw->g_tx_param.tx_page_free_num += dyna_page;
-                aml_hw->rx_buf_state |= BUFFER_TX_USED_FLAG;
-            }
-            else {
-                if (aml_hw->la_enable || aml_hw->trace_enable)
-                    aml_hw->g_tx_param.tx_page_free_num -= dyna_page;
-            }
-
             spin_unlock_bh(&aml_hw->tx_buf_lock);
             AML_PRINT(AML_DBG_MODULES_TX, "%s, tx_page_free_num=%d, credit=%d, pagenum=%d, skb=%p, cfm.credits=%d, drv_txcfm_idx=%d\n", __func__, aml_hw->g_tx_param.tx_page_free_num, txq->credits, page_num, skb, cfm.credits, drv_txcfm_idx);
             if (aml_hw->g_tx_param.tx_page_free_num >= aml_hw->g_tx_param.txcfm_trigger_tx_thr) {

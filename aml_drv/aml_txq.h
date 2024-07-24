@@ -139,9 +139,9 @@
 #endif
 
 /* stop netdev queue when number of queued buffers if greater than this  */
-#define AML_NDEV_FLOW_CTRL_STOP    2000
+#define AML_NDEV_FLOW_CTRL_STOP    10000
 /* restart netdev queue when number of queued buffers is lower than this */
-#define AML_NDEV_FLOW_CTRL_RESTART 600
+#define AML_NDEV_FLOW_CTRL_RESTART 9800
 
 #endif /*  CONFIG_AML_SOFTMAC */
 

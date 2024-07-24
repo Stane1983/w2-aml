@@ -127,7 +127,7 @@ const struct ieee80211_regdomain *aml_get_regdom(char *alpha2)
         }
         i++;
     }
-    return &regdom_global;
+    return NULL;
 }
 
 void aml_apply_regdom(struct aml_hw *aml_hw, struct wiphy *wiphy, char *alpha2)
@@ -142,20 +142,20 @@ void aml_apply_regdom(struct aml_hw *aml_hw, struct wiphy *wiphy, char *alpha2)
 
     AML_INFO("apply regdom alpha=%s", alpha2);
 
-    /* reset channel flags */
-    for (band_idx = 0; band_idx < 2; band_idx++) {
-        sband = wiphy->bands[band_idx];
-        if (!sband)
-            continue;
-
-        for (ch_idx = 0; ch_idx < sband->n_channels; ch_idx++) {
-            chan = &sband->channels[ch_idx];
-            chan->flags = 0;
-        }
-    }
-
     regdom = aml_get_regdom(alpha2);
     if (regdom) {
+        /* reset channel flags */
+        for (band_idx = 0; band_idx < 2; band_idx++) {
+            sband = wiphy->bands[band_idx];
+            if (!sband)
+                continue;
+
+            for (ch_idx = 0; ch_idx < sband->n_channels; ch_idx++) {
+                chan = &sband->channels[ch_idx];
+                chan->flags = 0;
+            }
+        }
+
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
         wiphy->regulatory_flags |= REGULATORY_CUSTOM_REG;
 #else

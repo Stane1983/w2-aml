@@ -1046,6 +1046,7 @@ void aml_sdio_usb_extend_irq_handle(struct aml_hw *aml_hw)
         case DYNAMIC_BUF_HOST_TX_STOP:
             aml_hw->dynabuf_stop_tx = DYNAMIC_BUF_HOST_TX_STOP;
             aml_hw->send_tx_stop_to_fw = 1;
+            up(&aml_hw->aml_tx_sem);
             break;
         case DYNAMIC_BUF_HOST_TX_START:
             aml_hw->dynabuf_stop_tx = 0;

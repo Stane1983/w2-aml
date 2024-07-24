@@ -332,7 +332,6 @@ static inline int __mdnsOffload_addProtocolResponses(struct wiphy *wiphy,
     matchCriteria *criteriaList = NULL;
     char *qname = NULL;
 
-    printk("mdnsOffload: addProtocolResponses\n");
     memset(ifname, 0, sizeof(ifname));
     memset(&offloadData, 0, sizeof(offloadData));
     nla_for_each_attr(iter, data, len, rem) {
@@ -386,11 +385,9 @@ static inline int __mdnsOffload_addProtocolResponses(struct wiphy *wiphy,
         err = -EINVAL;
         goto exit;
     }
-    printk("mdnsOffload: addProtocolResponses: ifname:%s\n", ifname);
     printk("mdnsOffload: addProtocolResponses: pkt_len:%u\n", pkt_len);
     printk("mdnsOffload: addProtocolResponses: criteriaListNum:%u\n",
         criteriaListNum);
-    printk("mdnsOffload: addProtocolResponses: dump:\n");
     printk("criteria list:\n");
     for (i = 0; i < criteriaListNum; i++) {
         qname = __mdnsOffload_decode_qname(pkt_data, pkt_len,

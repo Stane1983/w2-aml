@@ -706,7 +706,7 @@ void aml_sta_notify_csa_ch_switch(struct aml_hw *aml_hw, struct ipc_e2a_msg *msg
         mutex_lock(&vif->wdev.mtx);
         __acquire(&vif->wdev.mtx);
         #ifdef CFG80211_SINGLE_NETDEV_MULTI_LINK_SUPPORT
-        #if ((defined (AML_KERNEL_VERSION) && AML_KERNEL_VERSION >= 15) || LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 153))
+        #if ((defined (AML_KERNEL_VERSION) && AML_KERNEL_VERSION >= 15) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
         cfg80211_ch_switch_notify(vif->ndev, &chandef, 0, 0);
         #else
         cfg80211_ch_switch_notify(vif->ndev, &chandef, 0);
