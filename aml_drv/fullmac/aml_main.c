@@ -51,10 +51,6 @@
 #include "wifi_aon_addr.h"
 #include "aml_mdns_offload.h"
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 41) && defined (CONFIG_AMLOGIC_KERNEL_VERSION))
-#include <linux/upstream_version.h>
-#endif
-
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0))
 #include <linux/panic_notifier.h>
 #endif
@@ -780,15 +776,7 @@ static void aml_csa_finish(struct work_struct *ws)
         } else
             aml_txq_vif_stop(vif, AML_TXQ_STOP_CHAN, aml_hw);
         spin_unlock_bh(&aml_hw->cb_lock);
-#ifdef CFG80211_SINGLE_NETDEV_MULTI_LINK_SUPPORT
-#if ((defined (AML_KERNEL_VERSION) && AML_KERNEL_VERSION >= 15) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
-        cfg80211_ch_switch_notify(vif->ndev, &csa->chandef, 0, 0);
-#else
-        cfg80211_ch_switch_notify(vif->ndev, &csa->chandef, 0);
-#endif
-#else
-        cfg80211_ch_switch_notify(vif->ndev, &csa->chandef);
-#endif
+        aml_cfg80211_ch_switch_notify(vif->ndev, &csa->chandef, 0);
         mutex_unlock(&vif->wdev.mtx);
         __release(&vif->wdev.mtx);
     }
@@ -3837,15 +3825,7 @@ static int aml_cfg80211_channel_switch(struct wiphy *wiphy,
     } else {
         INIT_WORK(&csa->work, aml_csa_finish);
 #ifndef CONFIG_PT_MODE
-    #ifdef CFG80211_SINGLE_NETDEV_MULTI_LINK_SUPPORT
-        #if ((defined (AML_KERNEL_VERSION) && AML_KERNEL_VERSION >= 15) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
-        cfg80211_ch_switch_started_notify(dev, &csa->chandef, 0, params->count, params->block_tx, 0);
-        #else
-        cfg80211_ch_switch_started_notify(dev, &csa->chandef, 0, params->count, params->block_tx);
-        #endif
-    #else
-        cfg80211_ch_switch_started_notify(dev, &csa->chandef, params->count);
-    #endif
+        aml_cfg80211_ch_switch_started_notify(dev, &csa->chandef, 0, params->count, params->block_tx);
 #endif
     }
 
