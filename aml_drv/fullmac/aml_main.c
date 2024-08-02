@@ -4970,7 +4970,7 @@ static int aml_ps_wow_resume(struct aml_hw *aml_hw)
     struct aml_vif *aml_vif;
     int error = 0;
     struct aml_txq *txq;
-    int ret;
+    int ret = 0;
     unsigned int reg_value;
     int cnt = 0;
 
@@ -4987,11 +4987,16 @@ static int aml_ps_wow_resume(struct aml_hw *aml_hw)
         if (atomic_read(&g_wifi_pm.drv_suspend_cnt)) {
             atomic_set(&g_wifi_pm.drv_suspend_cnt, 0);
             USB_BEGIN_LOCK();
-            ret = usb_submit_urb(aml_hw->g_urb, GFP_ATOMIC);
+            if (aml_hw->g_urb->status != -EINPROGRESS)
+            {
+                printk("%s need submit urb\n", __func__);
+                ret = usb_submit_urb(aml_hw->g_urb, GFP_ATOMIC);
+            }
             USB_END_LOCK();
             if (ret < 0) {
                 ERROR_DEBUG_OUT("usb_submit_urb failed %d\n", ret);
             }
+            printk("%s aml_hw->g_urb->status %d\n", __func__,aml_hw->g_urb->status);
         }
     }
 
@@ -5237,6 +5242,7 @@ static int aml_ps_wow_suspend(struct aml_hw *aml_hw, struct cfg80211_wowlan *wow
         atomic_set(&g_wifi_pm.drv_suspend_cnt, 1);
         if (aml_hw->g_urb->status != 0) {
             usb_kill_urb(aml_hw->g_urb);
+            printk("%s kill urb status%d\n", __func__, aml_hw->g_urb->status);
         }
         USB_END_LOCK();
     } else if (aml_bus_type == PCIE_MODE) {
