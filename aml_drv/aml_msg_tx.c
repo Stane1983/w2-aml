@@ -25,6 +25,7 @@
 #include "aml_sap.h"
 #include "chip_intf_reg.h"
 #include "aml_compat.h"
+#include "aml_mdns_offload.h"
 
 const struct mac_addr mac_addr_bcst = {{0xFFFF, 0xFFFF, 0xFFFF}};
 
@@ -4052,7 +4053,7 @@ int aml_mdns_add_protocol_data_status(struct aml_hw *aml_hw, void *list_param, u
 
     if (!req)
         return -ENOMEM;
-    printk("%s ok exit   %d\n", __func__, __LINE__);
+    MDNS_OFFLOAD_DEBUG("%s ok exit   %d\n", __func__, __LINE__);
 
     if (list_len > MDNS_LIST_CRITERIA_MAX || data_len > MDNS_RAW_DATA_LENGTH_MAX) {
         aml_priv_msg_free(aml_hw, req);
@@ -4082,7 +4083,7 @@ int aml_mdns_add_protocol_data(struct aml_hw *aml_hw, void *list_param, uint8_t 
 
     if (!req)
         return -ENOMEM;
-    printk("%s ok exit   %d\n", __func__, __LINE__);
+    MDNS_OFFLOAD_DEBUG("%s ok exit   %d\n", __func__, __LINE__);
 
     req->index = index;
     memcpy(req->raw_offload_packet, raw_data, data_len);
@@ -4161,7 +4162,7 @@ int aml_mdns_add_passthrough_list(struct aml_hw *aml_hw, uint8_t *qname, int len
     if (ret != 0)
         return -1;
 
-    AML_INFO("state :%d", cfm.state);
+    MDNS_OFFLOAD_DEBUG("state :%d", cfm.state);
 
     return cfm.state;
 }

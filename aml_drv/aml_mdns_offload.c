@@ -21,11 +21,27 @@
 extern struct auc_hif_ops g_auc_hif_ops;
 extern void aml_pci_writel(u32 data, u8* addr);
 
+int g_mdns_offload_debug = 0;
+
 static u32_boolean setOffloadState(struct aml_hw *aml_hw, u32_boolean enabled)
 {
-    if (aml_mdns_set_offload_state(aml_hw, enabled) != 0)
-        return false;
-    return true;
+    uint32_t ret;
+
+#ifdef MDNS_OFFLOAD_FEATRUE
+    if (aml_mdns_set_offload_state(aml_hw, enabled) != 0) {
+        ret = false;
+        goto exit;
+    }
+    ret = true;
+#else
+    printk("%s: MDNS_OFFLOAD_FEATRUE is disabled!\n", __func__);
+    aml_mdns_set_offload_state(aml_hw, 0);
+    ret = false;
+#endif
+
+exit:
+    printk("%s: enabled:%d,ret:%d\n", __func__, enabled, ret);
+    return ret;
 }
 
 static void resetAll(struct aml_hw *aml_hw)
@@ -97,8 +113,8 @@ static void setPassthroughBehavior(struct aml_hw *aml_hw, char *networkInterface
 }
 
 ANDROID_MDNS_OFFLOAD_VENDOR_IMPL = {
-#ifdef MDNS_OFFLOAD_FEATRUE
     .setOffloadState = setOffloadState,
+#ifdef MDNS_OFFLOAD_FEATRUE
     .resetAll = resetAll,
     .addProtocolResponses = addProtocolResponses,
     .removeProtocolResponses = removeProtocolResponses,

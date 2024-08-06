@@ -20,6 +20,14 @@ typedef uint32_t u32_boolean;
 #define u32_true 1
 #define u32_false 0
 
+extern int g_mdns_offload_debug;
+
+#define MDNS_OFFLOAD_DEBUG(...)\
+    do {\
+        if (g_mdns_offload_debug)\
+            printk(__VA_ARGS__);\
+    } while(0);
+
 #define GOOGLE_VENDOR_OUI 0x1A11
 
 typedef enum {
@@ -258,7 +266,7 @@ static inline int __mdnsOffload_setOffloadState(struct wiphy *wiphy,
     u32_boolean *p_enabled = NULL;
     u32_boolean reply = 0;
 
-    printk("mdnsOffload: setOffloadState\n");
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: setOffloadState\n");
     nla_for_each_attr(iter, data, len, rem) {
         type = nla_type(iter);
         //printk("mdnsOffload: attr type:%d\n", type);
@@ -268,7 +276,7 @@ static inline int __mdnsOffload_setOffloadState(struct wiphy *wiphy,
                 p_enabled = &enabled;
                 break;
             default:
-                printk("mdnsOffload: unknown type:%d\n", type);
+                MDNS_OFFLOAD_DEBUG("mdnsOffload: unknown type:%d\n", type);
                 break;
         }
     }
@@ -276,21 +284,21 @@ static inline int __mdnsOffload_setOffloadState(struct wiphy *wiphy,
         err = -EINVAL;
         goto exit;
     }
-    printk("mdnsOffload: setOffloadState: enabled:%d\n", enabled);
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: setOffloadState: enabled:%d\n", enabled);
     if (mdns_offload_ops.setOffloadState) {
         reply = mdns_offload_ops.setOffloadState(aml_hw, (u32_boolean)enabled);
-        printk("mdnsOffload: setOffloadState: reply:%u\n", reply);
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: setOffloadState: reply:%u\n", reply);
         err = __mdnsOffload_send_vendor_cmd_reply(wiphy,
             WIFI_MDNS_OFFLOAD_SET_STATE,
             &reply, sizeof(reply));
     } else {
-        printk("mdnsOffload: setOffloadState: unsupported!\n");
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: setOffloadState: unsupported!\n");
         err = -EPERM;
         goto exit;
     }
 exit:
     if (err)
-        printk("mdnsOffload: setOffloadState: failed!err:%d\n", err);
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: setOffloadState: failed!err:%d\n", err);
     return err;
 }
 
@@ -301,17 +309,17 @@ static inline int __mdnsOffload_resetAll(struct wiphy *wiphy,
     struct aml_vif *vif = netdev_priv(wdev->netdev);
     int err = 0;
 
-    printk("mdnsOffload: resetAll\n");
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: resetAll\n");
     if (mdns_offload_ops.resetAll)
         mdns_offload_ops.resetAll(aml_hw);
     else {
-        printk("mdnsOffload: resetAll: unsupported!\n");
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: resetAll: unsupported!\n");
         err = -EPERM;
         goto exit;
     }
 exit:
     if (err)
-        printk("mdnsOffload: resetAll: failed!err=%d\n", err);
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: resetAll: failed!err=%d\n", err);
     return err;
 }
 
@@ -376,7 +384,7 @@ static inline int __mdnsOffload_addProtocolResponses(struct wiphy *wiphy,
                 }
                 break;
             default:
-                printk("mdnsOffload: unknown type:%d\n", type);
+                MDNS_OFFLOAD_DEBUG("mdnsOffload: unknown type:%d\n", type);
                 break;
         }
     }
@@ -385,34 +393,35 @@ static inline int __mdnsOffload_addProtocolResponses(struct wiphy *wiphy,
         err = -EINVAL;
         goto exit;
     }
-    printk("mdnsOffload: addProtocolResponses: pkt_len:%u\n", pkt_len);
-    printk("mdnsOffload: addProtocolResponses: criteriaListNum:%u\n",
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: addProtocolResponses: pkt_len:%u\n", pkt_len);
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: addProtocolResponses: criteriaListNum:%u\n",
         criteriaListNum);
-    printk("criteria list:\n");
+    MDNS_OFFLOAD_DEBUG("criteria list:\n");
     for (i = 0; i < criteriaListNum; i++) {
         qname = __mdnsOffload_decode_qname(pkt_data, pkt_len,
             criteriaList[i].nameOffset);
-        printk("%d. type:%d\tnameOffset:%d\tname:%s\n", i + 1,
+        MDNS_OFFLOAD_DEBUG("%d. type:%d\tnameOffset:%d\tname:%s\n", i + 1,
             criteriaList[i].type,
             criteriaList[i].nameOffset,
             (qname && strlen(qname) > 0) ? qname : "none");
         kfree(qname);
         qname = NULL;
     }
-    printk("rawOffloadPacket:\n");
-    //__mdnsOffload_dump_msg(pkt_data, pkt_len);
+    MDNS_OFFLOAD_DEBUG("rawOffloadPacket:\n");
+    if (g_mdns_offload_debug)
+        __mdnsOffload_dump_msg(pkt_data, pkt_len);
     if (mdns_offload_ops.addProtocolResponses) {
         offloadData.rawOffloadPacketLen = pkt_len;
         offloadData.rawOffloadPacket = pkt_data;
         offloadData.matchCriteriaListNum = criteriaListNum;
         offloadData.matchCriteriaList = criteriaList;
         reply = mdns_offload_ops.addProtocolResponses(aml_hw, ifname, &offloadData);
-        printk("mdnsOffload: addProtocolResponses: reply:%d\n", reply);
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: addProtocolResponses: reply:%d\n", reply);
         err = __mdnsOffload_send_vendor_cmd_reply(wiphy,
             WIFI_MDNS_OFFLOAD_ADD_PROTOCOL_RESPONSES,
             &reply, sizeof(reply));
     } else {
-        printk("mdnsOffload: addProtocolResponses: unsupported!\n");
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: addProtocolResponses: unsupported!\n");
         err = -EPERM;
         goto exit;
     }
@@ -423,7 +432,7 @@ exit:
         kfree(criteriaList);
 
     if (err)
-        printk("mdnsOffload: addProtocolResponses: failed!err:%d\n", err);
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: addProtocolResponses: failed!err:%d\n", err);
     return err;
 }
 
@@ -437,7 +446,7 @@ static inline int __mdnsOffload_removeProtocolResponses(struct wiphy *wiphy,
     int recordKey = -1;
     int *p_recordKey = NULL;
 
-    printk("mdnsOffload: removeProtocolResponses\n");
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: removeProtocolResponses\n");
     nla_for_each_attr(iter, data, len, rem) {
         type = nla_type(iter);
         //printk("mdnsOffload: attr type:%d\n", type);
@@ -447,7 +456,7 @@ static inline int __mdnsOffload_removeProtocolResponses(struct wiphy *wiphy,
                 p_recordKey = &recordKey;
                 break;
             default:
-                printk("mdnsOffload: unknown type:%d\n", type);
+                MDNS_OFFLOAD_DEBUG("mdnsOffload: unknown type:%d\n", type);
                 break;
         }
     }
@@ -455,18 +464,18 @@ static inline int __mdnsOffload_removeProtocolResponses(struct wiphy *wiphy,
         err = -EINVAL;
         goto exit;
     }
-    printk("mdnsOffload: removeProtocolResponses: recordKey:%d\n",
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: removeProtocolResponses: recordKey:%d\n",
         recordKey);
     if (mdns_offload_ops.removeProtocolResponses) {
         mdns_offload_ops.removeProtocolResponses(aml_hw, recordKey);
     } else {
-        printk("mdnsOffload: removeProtocolResponses: unsupported!\n");
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: removeProtocolResponses: unsupported!\n");
         err = -EPERM;
         goto exit;
     }
 exit:
     if (err)
-        printk("mdnsOffload: removeProtocolResponses: failed!err:%d\n", err);
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: removeProtocolResponses: failed!err:%d\n", err);
     return err;
 }
 
@@ -481,7 +490,7 @@ static inline int __mdnsOffload_getAndResetHitCounter(struct wiphy *wiphy,
     int *p_recordKey = NULL;
     int reply = 0;
 
-    printk("mdnsOffload: getAndResetHitCounter\n");
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: getAndResetHitCounter\n");
     nla_for_each_attr(iter, data, len, rem) {
         type = nla_type(iter);
         //printk("mdnsOffload: attr type:%d\n", type);
@@ -491,7 +500,7 @@ static inline int __mdnsOffload_getAndResetHitCounter(struct wiphy *wiphy,
                 p_recordKey = &recordKey;
                 break;
             default:
-                printk("mdnsOffload: unknown type:%d\n", type);
+                MDNS_OFFLOAD_DEBUG("mdnsOffload: unknown type:%d\n", type);
                 break;
         }
     }
@@ -499,22 +508,22 @@ static inline int __mdnsOffload_getAndResetHitCounter(struct wiphy *wiphy,
         err = -EINVAL;
         goto exit;
     }
-    printk("mdnsOffload: getAndResetHitCounter: recordKey:%d\n",
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: getAndResetHitCounter: recordKey:%d\n",
         recordKey);
     if (mdns_offload_ops.getAndResetHitCounter) {
         reply = mdns_offload_ops.getAndResetHitCounter(aml_hw, recordKey);
-        printk("mdnsOffload: getAndResetHitCounter: reply:%d\n", reply);
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: getAndResetHitCounter: reply:%d\n", reply);
         err = __mdnsOffload_send_vendor_cmd_reply(wiphy,
             WIFI_MDNS_OFFLOAD_GET_AND_RESET_HIT_COUNTER,
             &reply, sizeof(reply));
     } else {
-        printk("mdnsOffload: getAndResetHitCounter: unsupported!\n");
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: getAndResetHitCounter: unsupported!\n");
         err = -EPERM;
         goto exit;
     }
 exit:
     if (err)
-        printk("mdnsOffload: getAndResetHitCounter: failed!err:%d\n", err);
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: getAndResetHitCounter: failed!err:%d\n", err);
     return err;
 }
 
@@ -526,21 +535,21 @@ static inline int __mdnsOffload_getAndResetMissCounter(struct wiphy *wiphy,
     int err = 0;
     int reply = 0;
 
-    printk("mdnsOffload: getAndResetMissCounter\n");
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: getAndResetMissCounter\n");
     if (mdns_offload_ops.getAndResetMissCounter) {
         reply = mdns_offload_ops.getAndResetMissCounter(aml_hw);
-        printk("mdnsOffload: getAndResetMissCounter: reply:%d\n", reply);
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: getAndResetMissCounter: reply:%d\n", reply);
         err = __mdnsOffload_send_vendor_cmd_reply(wiphy,
             WIFI_MDNS_OFFLOAD_GET_AND_RESET_MISS_COUNTER,
             &reply, sizeof(reply));
     } else {
-        printk("mdnsOffload: getAndResetMissCounter: unsupported!\n");
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: getAndResetMissCounter: unsupported!\n");
         err = -EPERM;
         goto exit;
     }
 exit:
     if (err)
-        printk("mdnsOffload: getAndResetMissCounter: failed!err:%d\n", err);
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: getAndResetMissCounter: failed!err:%d\n", err);
     return err;
 }
 
@@ -557,7 +566,7 @@ static inline int __mdnsOffload_addToPassthroughList(struct wiphy *wiphy,
     char *p_qname = NULL;
     u32_boolean reply = 0;
 
-    printk("mdnsOffload: addToPassthroughList\n");
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: addToPassthroughList\n");
     memset(ifname, 0, sizeof(ifname));
     memset(qname, 0, sizeof(qname));
     nla_for_each_attr(iter, data, len, rem) {
@@ -573,7 +582,7 @@ static inline int __mdnsOffload_addToPassthroughList(struct wiphy *wiphy,
                 p_qname = qname;
                 break;
             default:
-                printk("mdnsOffload: unknown type:%d\n", type);
+                MDNS_OFFLOAD_DEBUG("mdnsOffload: unknown type:%d\n", type);
                 break;
         }
     }
@@ -581,22 +590,22 @@ static inline int __mdnsOffload_addToPassthroughList(struct wiphy *wiphy,
         err = -EINVAL;
         goto exit;
     }
-    printk("mdnsOffload: addToPassthroughList: ifname:%s\n", ifname);
-    printk("mdnsOffload: addToPassthroughList: length:%d qname:%s\n", strlen(qname), qname);
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: addToPassthroughList: ifname:%s\n", ifname);
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: addToPassthroughList: length:%d qname:%s\n", strlen(qname), qname);
     if (mdns_offload_ops.addToPassthroughList) {
         reply = mdns_offload_ops.addToPassthroughList(aml_hw, ifname, qname);
-        printk("mdnsOffload: addToPassthroughList: reply:%u\n", reply);
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: addToPassthroughList: reply:%u\n", reply);
         err = __mdnsOffload_send_vendor_cmd_reply(wiphy,
             WIFI_MDNS_OFFLOAD_ADD_TO_PASSTHROUGH_LIST,
             &reply, sizeof(reply));
     } else {
-        printk("mdnsOffload: addToPassthroughList: unsupported!\n");
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: addToPassthroughList: unsupported!\n");
         err = -EPERM;
         goto exit;
     }
 exit:
     if (err)
-        printk("mdnsOffload: addToPassthroughList: failed!err:%d\n", err);
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: addToPassthroughList: failed!err:%d\n", err);
     return err;
 }
 
@@ -612,7 +621,7 @@ static inline int __mdnsOffload_removeFromPassthroughList(struct wiphy *wiphy,
     char qname[64];
     char *p_qname = NULL;
 
-    printk("mdnsOffload: removeFromPassthroughList\n");
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: removeFromPassthroughList\n");
     memset(ifname, 0, sizeof(ifname));
     memset(qname, 0, sizeof(qname));
     nla_for_each_attr(iter, data, len, rem) {
@@ -628,12 +637,12 @@ static inline int __mdnsOffload_removeFromPassthroughList(struct wiphy *wiphy,
                 p_qname = qname;
                 break;
             default:
-                printk("mdnsOffload: unknown type:%d\n", type);
+                MDNS_OFFLOAD_DEBUG("mdnsOffload: unknown type:%d\n", type);
                 break;
         }
     }
-    printk("mdnsOffload: removeFromPassthroughList: ifname:%s\n", ifname);
-    printk("mdnsOffload: removeFromPassthroughList: qname:%s\n", qname);
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: removeFromPassthroughList: ifname:%s\n", ifname);
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: removeFromPassthroughList: qname:%s\n", qname);
     if (!p_ifname || !p_qname) {
         err = -EINVAL;
         goto exit;
@@ -641,13 +650,13 @@ static inline int __mdnsOffload_removeFromPassthroughList(struct wiphy *wiphy,
     if (mdns_offload_ops.removeFromPassthroughList) {
         mdns_offload_ops.removeFromPassthroughList(aml_hw, ifname, qname);
     } else {
-        printk("mdnsOffload: removeFromPassthroughList: unsupported!\n");
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: removeFromPassthroughList: unsupported!\n");
         err = -EPERM;
         goto exit;
     }
 exit:
     if (err)
-        printk("mdnsOffload: removeFromPassthroughList: failed!err:%d\n", err);
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: removeFromPassthroughList: failed!err:%d\n", err);
     return err;
 }
 
@@ -663,7 +672,7 @@ static inline int __mdnsOffload_setPassthroughBehavior(struct wiphy *wiphy,
     int behavior = -1;
     int *p_behavior = NULL;
 
-    printk("mdnsOffload: setPassthroughBehavior\n");
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: setPassthroughBehavior\n");
     memset(ifname, 0, sizeof(ifname));
     nla_for_each_attr(iter, data, len, rem) {
         type = nla_type(iter);
@@ -678,12 +687,12 @@ static inline int __mdnsOffload_setPassthroughBehavior(struct wiphy *wiphy,
                 p_behavior = &behavior;
                 break;
             default:
-                printk("mdnsOffload: unknown type:%d\n", type);
+                MDNS_OFFLOAD_DEBUG("mdnsOffload: unknown type:%d\n", type);
                 break;
         }
     }
-    printk("mdnsOffload: setPassthroughBehavior: ifname:%s\n", ifname);
-    printk("mdnsOffload: setPassthroughBehavior: behavior:%d\n", behavior);
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: setPassthroughBehavior: ifname:%s\n", ifname);
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: setPassthroughBehavior: behavior:%d\n", behavior);
     if (!p_ifname || !p_behavior) {
         err = -EINVAL;
         goto exit;
@@ -692,13 +701,13 @@ static inline int __mdnsOffload_setPassthroughBehavior(struct wiphy *wiphy,
         mdns_offload_ops.setPassthroughBehavior(aml_hw, ifname,
             (passthroughBehavior)behavior);
     } else {
-        printk("mdnsOffload: setPassthroughBehavior: unsupported!\n");
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: setPassthroughBehavior: unsupported!\n");
         err = -EPERM;
         goto exit;
     }
 exit:
     if (err)
-        printk("mdnsOffload: setPassthroughBehavior: failed!err:%d\n", err);
+        MDNS_OFFLOAD_DEBUG("mdnsOffload: setPassthroughBehavior: failed!err:%d\n", err);
     return err;
 }
 

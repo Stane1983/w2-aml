@@ -5242,7 +5242,7 @@ static int aml_ps_wow_suspend(struct aml_hw *aml_hw, struct cfg80211_wowlan *wow
         atomic_set(&g_wifi_pm.drv_suspend_cnt, 1);
         if (aml_hw->g_urb->status != 0) {
             usb_kill_urb(aml_hw->g_urb);
-            printk("%s kill urb status%d\n", __func__, aml_hw->g_urb->status);
+            printk("%s kill urb status %d\n", __func__, aml_hw->g_urb->status);
         }
         USB_END_LOCK();
     } else if (aml_bus_type == PCIE_MODE) {
