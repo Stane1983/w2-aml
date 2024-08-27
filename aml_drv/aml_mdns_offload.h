@@ -426,9 +426,9 @@ static inline int __mdnsOffload_addProtocolResponses(struct wiphy *wiphy,
         goto exit;
     }
 exit:
-    if (!pkt_data)
+    if (pkt_data)
         kfree(pkt_data);
-    if (!criteriaList)
+    if (criteriaList)
         kfree(criteriaList);
 
     if (err)
