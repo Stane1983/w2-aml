@@ -1801,11 +1801,6 @@ static int aml_cfg80211_scan(struct wiphy *wiphy,
         return -EAGAIN;
     }
 
-    if (aml_connect_flags_chk(aml_vif, AML_GETTING_IP)) {
-        printk("dhcp is ongoing, can't scan now!\n");
-        return -EBUSY;
-    }
-
     if ((aml_hw->traffic_busy) && (time_after(jiffies, last_time + msecs_to_jiffies(AML_SCAN_INTERNAL_THR)))) {
         AML_INFO("abort scan,traffic busy\n");
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0)
