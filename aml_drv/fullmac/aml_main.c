@@ -6205,7 +6205,7 @@ static int aml_hwctx_buf_init(struct aml_hw *aml_hw)
             return -1;
         }
 
-        aml_hw->scanres_payload_buf = kmalloc(SCAN_RESULTS_MAX_CNT*500, GFP_ATOMIC);
+        aml_hw->scanres_payload_buf = kmalloc(SCAN_RESULTS_MAX_CNT*500, GFP_ATOMIC | __GFP_NOFAIL);
         if (!aml_hw->scanres_payload_buf) {
             AML_INFO("Failed to alloc scans payload buffer");
             aml_hw->scanres_payload_buf = NULL;
