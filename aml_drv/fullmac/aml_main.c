@@ -765,8 +765,13 @@ static void aml_csa_finish(struct work_struct *ws)
     if (error)
         cfg80211_stop_iface(aml_hw->wiphy, &vif->wdev, GFP_KERNEL);
     else {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
+        mutex_lock(&vif->wdev.wiphy->mtx);
+        __acquire(&vif->wdev.wiphy->mtx);
+#else
         mutex_lock(&vif->wdev.mtx);
         __acquire(&vif->wdev.mtx);
+#endif
         spin_lock_bh(&aml_hw->cb_lock);
         aml_chanctx_unlink(vif);
         aml_chanctx_link(vif, csa->ch_idx, &csa->chandef);
@@ -777,8 +782,13 @@ static void aml_csa_finish(struct work_struct *ws)
             aml_txq_vif_stop(vif, AML_TXQ_STOP_CHAN, aml_hw);
         spin_unlock_bh(&aml_hw->cb_lock);
         aml_cfg80211_ch_switch_notify(vif->ndev, &csa->chandef, 0);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
+        mutex_unlock(&vif->wdev.wiphy->mtx);
+        __release(&vif->wdev.wiphy->mtx);
+#else
         mutex_unlock(&vif->wdev.mtx);
         __release(&vif->wdev.mtx);
+#endif
     }
     aml_del_csa(vif);
 }
@@ -2728,7 +2738,11 @@ end:
  *	interface. This should reject the call when AP mode wasn't started.
  */
 static int aml_cfg80211_change_beacon(struct wiphy *wiphy, struct net_device *dev,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
+                                       struct cfg80211_ap_update *info)
+#else
                                        struct cfg80211_beacon_data *info)
+#endif
 {
     struct aml_hw *aml_hw = wiphy_priv(wiphy);
     struct aml_vif *vif = netdev_priv(dev);
@@ -3516,7 +3530,11 @@ int aml_cfg80211_mgmt_tx_cancel_wait(struct wiphy *wiphy, struct wireless_dev *w
 static int aml_cfg80211_start_radar_detection(struct wiphy *wiphy,
                                                struct net_device *dev,
                                                struct cfg80211_chan_def *chandef,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
+                                               u32 cac_time_ms, int link_id)
+#else
                                                u32 cac_time_ms)
+#endif
 {
     struct aml_hw *aml_hw = wiphy_priv(wiphy);
     struct aml_vif *aml_vif = netdev_priv(dev);
@@ -3835,7 +3853,11 @@ static int aml_cfg80211_channel_switch(struct wiphy *wiphy,
  * @@tdls_mgmt: Transmit a TDLS management frame.
  */
 static int aml_cfg80211_tdls_mgmt(struct wiphy *wiphy, struct net_device *dev,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 5, 0)
+                                   const u8 *peer, int link_id, u8 action_code,  u8 dialog_token,
+#else
                                    const u8 *peer, u8 action_code,  u8 dialog_token,
+#endif
                                    u16 status_code, u32 peer_capability,
                                    bool initiator, const u8 *buf, size_t len)
 {

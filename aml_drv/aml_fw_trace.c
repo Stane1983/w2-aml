@@ -16,6 +16,7 @@
 #include <linux/delay.h>
 #include <net/sock.h>
 #include <net/netlink.h>
+#include <linux/vmalloc.h>
 #include "aml_defs.h"
 #include "wifi_w2_shared_mem_cfg.h"
 #include "share_mem_map.h"

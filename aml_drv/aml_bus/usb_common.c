@@ -134,7 +134,9 @@ static struct usb_driver aml_usb_common_driver = {
     .suspend = auc_suspend,
     .resume = auc_resume,
 #endif
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(6, 8, 0)
     .drvwrap.driver.shutdown = auc_shutdown,
+#endif
 };
 
 

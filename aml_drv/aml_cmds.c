@@ -19,6 +19,7 @@
 #include "aml_events.h"
 #include "aml_interface.h"
 #include "aml_mdns_offload.h"
+#include "aml_msg_rx.h"
 
 extern unsigned int aml_bus_type;
 extern char *bus_type;

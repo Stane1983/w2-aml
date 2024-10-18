@@ -5,6 +5,7 @@
  *
  * Copyright (C) Amlogic 2012-2021
  */
+#include <linux/vmalloc.h>
 #include "aml_utils.h"
 #include "aml_defs.h"
 #include "aml_rx.h"

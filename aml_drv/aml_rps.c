@@ -22,6 +22,10 @@
 #if LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0)
 #include <net/netdev_rx_queue.h>
 #endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
+#include <net/hotdata.h>
+#include <net/rps.h>
+#endif
 #include "aml_rps.h"
 #include "aml_utils.h"
 #include "aml_interface.h"
@@ -258,7 +262,7 @@ static int aml_rps_sock_flow_sysctl_set(unsigned int size)
         return -1;
 
     mutex_lock(&sock_flow_mutex);
-    orig_sock_table = rcu_dereference_protected(rps_sock_flow_table,
+    orig_sock_table = rcu_dereference_protected(orig_sock_table,
             lockdep_is_held(&sock_flow_mutex));
     orig_size = orig_sock_table ? orig_sock_table->mask + 1 : 0;
 
@@ -276,7 +280,11 @@ static int aml_rps_sock_flow_sysctl_set(unsigned int size)
             AML_INFO("alloc table fail\n");
             return -ENOMEM;
         }
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
+        net_hotdata.rps_cpu_mask = roundup_pow_of_two(nr_cpu_ids) - 1;
+#else
         rps_cpu_mask = roundup_pow_of_two(nr_cpu_ids) - 1;
+#endif
         sock_table->mask = size - 1;
     } else {
         mutex_unlock(&sock_flow_mutex);
@@ -287,7 +295,7 @@ static int aml_rps_sock_flow_sysctl_set(unsigned int size)
     for (i = 0; i < size; i++)
         sock_table->ents[i] = RPS_NO_CPU;
 
-    rcu_assign_pointer(rps_sock_flow_table, sock_table);
+    rcu_assign_pointer(orig_sock_table, sock_table);
     if (sock_table) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
         static_branch_inc(&rps_needed);

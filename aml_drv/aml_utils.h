@@ -321,6 +321,7 @@ int aml_rx_task(void *data);
 int aml_tx_task(void *data);
 int aml_msg_task(void *data);
 int aml_tx_cfm_task(void *data);
+void aml_tx_cfm_param_init(struct aml_hw *aml_hw);
 #ifdef CONFIG_SDIO_TX_ENH
 int aml_update_dyn_txcfm(struct aml_hw *aml_hw, int en);
 #endif

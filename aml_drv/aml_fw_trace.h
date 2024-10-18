@@ -181,5 +181,6 @@ static inline bool aml_fw_trace_empty(struct aml_fw_trace_buf *shared_buf)
 }
 int aml_log_nl_init(void);
 void aml_log_nl_destroy(void);
+int aml_send_log_to_user(char *pbuf, uint16_t len, int msg_type);
 
 #endif /* _AML_FW_TRACE_H_ */

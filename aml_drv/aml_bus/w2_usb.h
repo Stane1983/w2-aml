@@ -40,4 +40,7 @@ struct auc_hif_ops {
 
 int wifi_fw_download(char *firmware_filename);
 int start_wifi(void);
+void auc_write_word_by_ep_for_wifi(unsigned int addr,unsigned int data, unsigned int ep);
+unsigned int auc_read_word_by_ep_for_wifi(unsigned int addr, unsigned int ep);
+
 #endif

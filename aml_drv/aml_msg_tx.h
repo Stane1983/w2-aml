@@ -244,5 +244,18 @@ int _aml_set_la_capture(struct aml_vif *aml_vif, u32 bus1, u32 bus2);
 int _aml_fix_txpwr(struct aml_vif *aml_vif, int pwr);
 int _aml_set_usb_trace_enable(struct aml_hw *aml_hw, int value);
 int _aml_putv_trace_switch(struct aml_hw *aml_hw, int value);
+int _aml_set_la_enable(struct aml_hw *aml_hw, int value);
+int aml_set_rssi_reg(struct aml_vif *aml_vif, int flag);
+int aml_mdns_set_offload_state(struct aml_hw *aml_hw, int enable);
+int aml_mdns_reset_all(struct aml_hw *aml_hw);
+int aml_coex_get_status(struct net_device *dev);
+int aml_mdns_add_protocol_data_status(struct aml_hw *aml_hw, void *list_param, uint8_t list_len, uint16_t data_len);
+int aml_mdns_add_protocol_data(struct aml_hw *aml_hw, void *list_param, uint8_t *raw_data, uint8_t index, uint16_t data_len);
+int aml_mdns_remove_protocol_data(struct aml_hw *aml_hw, int index);
+int aml_mdns_get_reset_hit_counter(struct aml_hw *aml_hw, int index);
+int aml_mdns_get_reset_miss_counter(struct aml_hw *aml_hw);
+int aml_mdns_add_passthrough_list(struct aml_hw *aml_hw, uint8_t *qname, int length);
+int aml_mdns_remove_passthrough_list(struct aml_hw *aml_hw, uint8_t *qname, int length);
+int aml_mdns_set_passthrough_behavior(struct aml_hw *aml_hw, int behavior);
 
 #endif /* _AML_MSG_TX_H_ */

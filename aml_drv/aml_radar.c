@@ -1400,8 +1400,13 @@ static void aml_radar_cac_work(struct work_struct *ws)
     }
 
     ctxt = &aml_hw->chanctx_table[radar->cac_vif->ch_index];
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
+    cfg80211_cac_event(radar->cac_vif->ndev, &ctxt->chan_def,
+                       NL80211_RADAR_CAC_FINISHED, GFP_KERNEL, 0);
+#else
     cfg80211_cac_event(radar->cac_vif->ndev, &ctxt->chan_def,
                        NL80211_RADAR_CAC_FINISHED, GFP_KERNEL);
+#endif
     aml_send_apm_stop_cac_req(aml_hw, radar->cac_vif);
     aml_chanctx_unlink(radar->cac_vif);
 
@@ -1495,8 +1500,13 @@ void aml_radar_cancel_cac(struct aml_radar *radar)
         struct aml_chanctx *ctxt;
         ctxt = &aml_hw->chanctx_table[radar->cac_vif->ch_index];
         aml_send_apm_stop_cac_req(aml_hw, radar->cac_vif);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
+        cfg80211_cac_event(radar->cac_vif->ndev, &ctxt->chan_def,
+                           NL80211_RADAR_CAC_ABORTED, GFP_KERNEL, 0);
+#else
         cfg80211_cac_event(radar->cac_vif->ndev, &ctxt->chan_def,
                            NL80211_RADAR_CAC_ABORTED, GFP_KERNEL);
+#endif
         aml_chanctx_unlink(radar->cac_vif);
     }
 

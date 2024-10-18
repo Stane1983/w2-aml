@@ -1,5 +1,6 @@
 #include <linux/sort.h>
 #include <linux/math64.h>
+#include <linux/vmalloc.h>
 #include "aml_iwpriv_cmds.h"
 #include "aml_mod_params.h"
 #include "aml_debugfs.h"
@@ -18,6 +19,7 @@
 #include "sdio_common.h"
 #include "aml_fw_trace.h"
 #include "aml_mdns_offload.h"
+#include "aml_cfg.h"
 
 #define RC_AUTO_RATE_INDEX -1
 #define MAX_CHAR_SIZE 40

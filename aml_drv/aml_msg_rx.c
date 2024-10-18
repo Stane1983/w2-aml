@@ -700,11 +700,19 @@ void aml_sta_notify_csa_ch_switch(struct aml_hw *aml_hw, struct ipc_e2a_msg *msg
 
         AML_INFO("chandef.center_freq1:%d, chandef.center_freq2:%d", chandef.center_freq1, chandef.center_freq2);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
+        mutex_lock(&vif->wdev.wiphy->mtx);
+        __acquire(&vif->wdev.wiphy->mtx);
+        aml_cfg80211_ch_switch_notify(vif->ndev, &chandef, 0);
+        mutex_unlock(&vif->wdev.wiphy->mtx);
+        __release(&vif->wdev.wiphy->mtx);
+#else
         mutex_lock(&vif->wdev.mtx);
         __acquire(&vif->wdev.mtx);
         aml_cfg80211_ch_switch_notify(vif->ndev, &chandef, 0);
         mutex_unlock(&vif->wdev.mtx);
         __release(&vif->wdev.mtx);
+#endif
 
         ctxt = &vif->aml_hw->chanctx_table[vif->ch_index];
         if (!ctxt->chan_def.chan) {

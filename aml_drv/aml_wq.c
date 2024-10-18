@@ -13,7 +13,7 @@
 #include "aml_recy.h"
 #include "aml_msg_tx.h"
 #include "aml_scc.h"
-
+#include "aml_main.h"
 
 struct aml_wq *aml_wq_alloc(int len)
 {

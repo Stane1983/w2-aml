@@ -12,6 +12,7 @@
 
 #include "aml_mdns_offload.h"
 #include "lmac_msg.h"
+#include "aml_msg_tx.h"
 
 /// The maximum number of response data that can be added
 #define MDNS_INDEX_ERR              (-1)

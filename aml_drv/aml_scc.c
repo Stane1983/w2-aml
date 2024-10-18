@@ -348,8 +348,13 @@ void aml_scc_csa_finish(struct work_struct *ws)
          if (aml_scc_change_beacon_ht_ie(vif->aml_hw->wiphy,vif->ndev,csa->chandef)) {
             AML_INFO("bcn change ht ie fail\n");
         }
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
+        mutex_lock(&vif->wdev.wiphy->mtx);
+        __acquire(&vif->wdev.wiphy->mtx);
+#else
         mutex_lock(&vif->wdev.mtx);
         __acquire(&vif->wdev.mtx);
+#endif
         spin_lock_bh(&aml_hw->cb_lock);
         aml_chanctx_unlink(vif);
         aml_chanctx_link(vif, csa->ch_idx, &csa->chandef);
@@ -360,8 +365,13 @@ void aml_scc_csa_finish(struct work_struct *ws)
             aml_txq_vif_stop(vif, AML_TXQ_STOP_CHAN, aml_hw);
         spin_unlock_bh(&aml_hw->cb_lock);
         aml_cfg80211_ch_switch_notify(vif->ndev, &csa->chandef, 0);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
+        mutex_unlock(&vif->wdev.wiphy->mtx);
+        __release(&vif->wdev.wiphy->mtx);
+#else
         mutex_unlock(&vif->wdev.mtx);
         __release(&vif->wdev.mtx);
+#endif
     }
     kfree(csa);
     vif->ap.csa = NULL;

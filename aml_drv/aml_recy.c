@@ -42,6 +42,7 @@ extern struct aml_bus_state_detect bus_state_detect;
 extern struct aml_pm_type g_wifi_pm;
 
 extern int g_cali_cfg_done;
+extern void aml_usb_reset(void);
 
 static const char *const aml_recy_reason_code2str[RECY_REASON_CODE_MAX] = {
     [RECY_REASON_CODE_CMD_CRASH]       = "RECY_REASON_CODE_CMD_CRASH",

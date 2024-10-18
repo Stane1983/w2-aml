@@ -17,6 +17,7 @@
 #include <linux/string.h>
 #include <linux/sort.h>
 #include <linux/math64.h>
+#include <linux/vmalloc.h>
 
 #include "aml_msg_tx.h"
 #include "aml_radar.h"

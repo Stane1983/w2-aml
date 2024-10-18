@@ -27,6 +27,7 @@
 #include "sg_common.h"
 #include "wifi_top_addr.h"
 #include "aml_rps.h"
+#include "aml_p2p.h"
 
 struct vendor_radiotap_hdr {
     u8 oui[3];
