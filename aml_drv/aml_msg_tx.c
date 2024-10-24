@@ -399,19 +399,31 @@ static void aml_priv_msg_free(struct aml_hw *aml_hw, const void *msg_params)
 
     aml_msg_free(aml_hw, msg);
 }
+
 extern struct aml_bus_state_detect bus_state_detect;
 static int aml_send_msg(struct aml_hw *aml_hw, const void *msg_params,
                          int reqcfm, lmac_msg_id_t reqid, void *cfm)
 {
     struct lmac_msg *msg;
     struct aml_cmd *cmd;
+    struct mm_other_cmd *other_cmd;
     bool nonblock;
     bool call_thread;
     int ret;
-
-    AML_DBG(AML_FN_ENTRY_STR);
+    uint32_t id;
 
     msg = container_of((void *)msg_params, struct lmac_msg, param);
+    id = msg->id;
+    if (id == MM_OTHER_REQ) {
+        other_cmd = (struct mm_other_cmd *)msg_params;
+        id = other_cmd->mm_sub_index;
+    }
+
+    if (is_mdnsoffload_msg(id))
+        MDNS_OFFLOAD_DEBUG(AML_FN_ENTRY_STR);
+    else
+        AML_DBG(AML_FN_ENTRY_STR);
+
 #ifdef CONFIG_AML_RECOVERY
     if ((aml_bus_type != PCIE_MODE) && (bus_state_detect.bus_err)) {
         kfree(msg);

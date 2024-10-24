@@ -26,7 +26,7 @@ extern int g_mdns_offload_debug;
     do {\
         if (g_mdns_offload_debug)\
             printk(__VA_ARGS__);\
-    } while(0);
+    } while(0)
 
 #define GOOGLE_VENDOR_OUI 0x1A11
 
@@ -188,7 +188,7 @@ static inline char *__mdnsOffload_decode_qname(unsigned char *buf,
     }
     return qname;
 err:
-    printk("mdnsOffload: decode qname failed!\n");
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: decode qname failed!\n");
     kfree(qname);
     return NULL;
 }
