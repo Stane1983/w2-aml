@@ -396,20 +396,21 @@ static inline int __mdnsOffload_addProtocolResponses(struct wiphy *wiphy,
     MDNS_OFFLOAD_DEBUG("mdnsOffload: addProtocolResponses: pkt_len:%u\n", pkt_len);
     MDNS_OFFLOAD_DEBUG("mdnsOffload: addProtocolResponses: criteriaListNum:%u\n",
         criteriaListNum);
-    MDNS_OFFLOAD_DEBUG("criteria list:\n");
-    for (i = 0; i < criteriaListNum; i++) {
-        qname = __mdnsOffload_decode_qname(pkt_data, pkt_len,
-            criteriaList[i].nameOffset);
-        MDNS_OFFLOAD_DEBUG("%d. type:%d\tnameOffset:%d\tname:%s\n", i + 1,
-            criteriaList[i].type,
-            criteriaList[i].nameOffset,
-            (qname && strlen(qname) > 0) ? qname : "none");
-        kfree(qname);
-        qname = NULL;
-    }
-    MDNS_OFFLOAD_DEBUG("rawOffloadPacket:\n");
-    if (g_mdns_offload_debug)
+    if (g_mdns_offload_debug) {
+        MDNS_OFFLOAD_DEBUG("criteria list:\n");
+        for (i = 0; i < criteriaListNum; i++) {
+	        qname = __mdnsOffload_decode_qname(pkt_data, pkt_len,
+	            criteriaList[i].nameOffset);
+	        MDNS_OFFLOAD_DEBUG("%d. type:%d\tnameOffset:%d\tname:%s\n", i + 1,
+	            criteriaList[i].type,
+	            criteriaList[i].nameOffset,
+	            (qname && strlen(qname) > 0) ? qname : "none");
+	        kfree(qname);
+	        qname = NULL;
+        }
+        MDNS_OFFLOAD_DEBUG("rawOffloadPacket:\n");
         __mdnsOffload_dump_msg(pkt_data, pkt_len);
+    }
     if (mdns_offload_ops.addProtocolResponses) {
         offloadData.rawOffloadPacketLen = pkt_len;
         offloadData.rawOffloadPacket = pkt_data;
