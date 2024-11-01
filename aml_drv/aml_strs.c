@@ -167,16 +167,6 @@ const char *const aml_mm_other_id2str[MM_SUB_A2E_MAX] = {
     [MM_SUB_SET_USB_TRACE_STATE]     = "MM_SUB_SET_USB_TRACE_STATE",
     [MM_SUB_SET_PUTV_TRACE_SWITCH]   = "MM_SUB_SET_PUTV_TRACE_SWITCH",
     [MM_SUB_ENABLE_RSSI_REG]         = "MM_SUB_ENABLE_RSSI_REG",
-    [MDNS_SET_STATE]                 = "MDNS_SET_STATE",
-    [MDNS_SET_BEHAVIOR]              = "MDNS_SET_BEHAVIOR",
-    [MDNS_ADD_PROTOCOL]              = "MDNS_ADD_PROTOCOL",
-    [MDNS_REMOVE_PROTOCOL]           = "MDNS_REMOVE_PROTOCOL",
-    [MDNS_GET_HIT]                   = "MDNS_GET_HIT",
-    [MDNS_GET_MISS]                  = "MDNS_GET_MISS",
-    [MDNS_ADD_PASS_LIST]             = "MDNS_ADD_PASS_LIST",
-    [MDNS_REMOVE_PASS_LIST]          = "MDNS_REMOVE_PASS_LIST",
-    [MDNS_RESET_ALL]                 = "MDNS_RESET_ALL",
-    [MDNS_ADD_PROTOCOL_STATUS]       = "MDNS_ADD_PROTOCOL_STATUS",
 };
 
 static const char *const aml_dbgid2str[MSG_I(DBG_MAX)] = {

@@ -660,7 +660,7 @@ static int aml_scc_channel_switch(struct aml_hw *aml_hw, struct aml_vif *vif, st
     } else {
         INIT_WORK(&csa->work, aml_scc_csa_finish);
 #ifndef CONFIG_PT_MODE
-        aml_cfg80211_ch_switch_started_notify(vif->ndev, &csa->chandef, 0, CSA_COUNT, CSA_BLOCK_TX);
+    aml_cfg80211_ch_switch_started_notify(vif->ndev, &csa->chandef, 0, CSA_COUNT, CSA_BLOCK_TX);
 #endif
     }
 

@@ -513,9 +513,11 @@ static const int aml_hwq2uapsd[NL80211_NUM_ACS] = {
 };
 
 extern void aml_print_version(void);
+#ifdef CONFIG_AML_DEBUGFS
 extern int aml_trace_buf_init(void);
 
 extern void aml_trace_buf_deinit(void);
+#endif
 extern struct aml_bus_state_detect bus_state_detect;
 extern struct usb_device *g_udev;
 /*********************************************************************
@@ -1809,6 +1811,11 @@ static int aml_cfg80211_scan(struct wiphy *wiphy,
     if (aml_vif->sta.scan_hang) {
         printk("%s scan_hang is on, can't scan now!\n", __func__);
         return -EAGAIN;
+    }
+
+    if (aml_connect_flags_chk(aml_vif, AML_GETTING_IP)) {
+        printk("dhcp is ongoing, can't scan now!\n");
+        return -EBUSY;
     }
 
     if ((aml_hw->traffic_busy) && (time_after(jiffies, last_time + msecs_to_jiffies(AML_SCAN_INTERNAL_THR)))) {
@@ -4987,7 +4994,7 @@ static int aml_ps_wow_resume(struct aml_hw *aml_hw)
     struct aml_vif *aml_vif;
     int error = 0;
     struct aml_txq *txq;
-    int ret = 0;
+    int ret;
     unsigned int reg_value;
     int cnt = 0;
 
@@ -5004,16 +5011,11 @@ static int aml_ps_wow_resume(struct aml_hw *aml_hw)
         if (atomic_read(&g_wifi_pm.drv_suspend_cnt)) {
             atomic_set(&g_wifi_pm.drv_suspend_cnt, 0);
             USB_BEGIN_LOCK();
-            if (aml_hw->g_urb->status != -EINPROGRESS)
-            {
-                printk("%s need submit urb\n", __func__);
-                ret = usb_submit_urb(aml_hw->g_urb, GFP_ATOMIC);
-            }
+            ret = usb_submit_urb(aml_hw->g_urb, GFP_ATOMIC);
             USB_END_LOCK();
             if (ret < 0) {
                 ERROR_DEBUG_OUT("usb_submit_urb failed %d\n", ret);
             }
-            printk("%s aml_hw->g_urb->status %d\n", __func__,aml_hw->g_urb->status);
         }
     }
 
@@ -5259,7 +5261,6 @@ static int aml_ps_wow_suspend(struct aml_hw *aml_hw, struct cfg80211_wowlan *wow
         atomic_set(&g_wifi_pm.drv_suspend_cnt, 1);
         if (aml_hw->g_urb->status != 0) {
             usb_kill_urb(aml_hw->g_urb);
-            printk("%s kill urb status %d\n", __func__, aml_hw->g_urb->status);
         }
         USB_END_LOCK();
     } else if (aml_bus_type == PCIE_MODE) {
@@ -6227,7 +6228,7 @@ static int aml_hwctx_buf_init(struct aml_hw *aml_hw)
             return -1;
         }
 
-        aml_hw->scanres_payload_buf = kmalloc(SCAN_RESULTS_MAX_CNT*500, GFP_ATOMIC | __GFP_NOFAIL);
+        aml_hw->scanres_payload_buf = kmalloc(SCAN_RESULTS_MAX_CNT*500, GFP_ATOMIC);
         if (!aml_hw->scanres_payload_buf) {
             AML_INFO("Failed to alloc scans payload buffer");
             aml_hw->scanres_payload_buf = NULL;
@@ -6568,10 +6569,11 @@ int aml_cfg80211_init(struct aml_plat *aml_plat, void **platform_data)
     aml_sync_trace_init(aml_hw);
 #endif
 
+#ifdef CONFIG_AML_DEBUGFS
     if (ret = aml_trace_buf_init()) {
         AML_INFO("alloc trace buf failed(%d)!\n", ret);
     }
-
+#endif
 #ifdef CONFIG_AML_RECOVERY
     aml_recy_init(aml_hw);
 #endif

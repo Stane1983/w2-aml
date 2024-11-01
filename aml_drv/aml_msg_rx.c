@@ -35,7 +35,6 @@
 #include "aml_recy.h"
 
 extern bool pt_mode;
-extern struct aml_pm_type g_wifi_pm;
 
 static int aml_freq_to_idx(struct aml_hw *aml_hw, int freq)
 {
@@ -2096,10 +2095,6 @@ static inline int aml_suspend_ind(struct aml_hw *aml_hw,
                                   struct ipc_e2a_msg *msg)
 {
     aml_hw->suspend_ind = SUSPEND_IND_RECV;
-    if (aml_bus_type == USB_MODE)
-    {
-        atomic_set(&g_wifi_pm.drv_suspend_cnt, 1);
-    }
     printk("%s %d\n", __func__, __LINE__);
     return 0;
 }
@@ -2320,21 +2315,25 @@ static msg_cb_fct priv_hdlrs[MSG_I(PRIV_SUB_E2A_MAX)] = {
     [MSG_I(PRIV_COEX_GET_STATUS)]     = aml_coex_get_status_ind,
 };
 
-static msg_cb_fct *msg_hdlrs[] = {
-    [TASK_MM]    = mm_hdlrs,
-    [TASK_PRIV]  = priv_hdlrs,
-    [TASK_DBG]   = dbg_hdlrs,
+#define MSG_SUB_HDLRS(_sub_hdlrs)       { ARRAY_SIZE(_sub_hdlrs), _sub_hdlrs, }
+static const struct msg_hdlr_info {
+    uint32_t max_index;
+    msg_cb_fct *hdlrs;
+} msg_hdlrs[] = {
+    [TASK_MM]    = MSG_SUB_HDLRS(mm_hdlrs),
+    [TASK_PRIV]  = MSG_SUB_HDLRS(priv_hdlrs),
+    [TASK_DBG]   = MSG_SUB_HDLRS(dbg_hdlrs),
 #ifdef CONFIG_AML_SOFTMAC
-    [TASK_SCAN]  = scan_hdlrs,
-    [TASK_TDLS]  = tdls_hdlrs,
+    [TASK_SCAN]  = MSG_SUB_HDLRS(scan_hdlrs),
+    [TASK_TDLS]  = MSG_SUB_HDLRS(tdls_hdlrs),
 #else
-    [TASK_TDLS]  = tdls_hdlrs,
-    [TASK_SCANU] = scan_hdlrs,
-    [TASK_ME]    = me_hdlrs,
-    [TASK_SM]    = sm_hdlrs,
-    [TASK_APM]   = apm_hdlrs,
-    [TASK_MESH]  = mesh_hdlrs,
-    [TASK_TWT]   = twt_hdlrs,
+    [TASK_TDLS]  = MSG_SUB_HDLRS(tdls_hdlrs),
+    [TASK_SCANU] = MSG_SUB_HDLRS(scan_hdlrs),
+    [TASK_ME]    = MSG_SUB_HDLRS(me_hdlrs),
+    [TASK_SM]    = MSG_SUB_HDLRS(sm_hdlrs),
+    [TASK_APM]   = MSG_SUB_HDLRS(apm_hdlrs),
+    [TASK_MESH]  = MSG_SUB_HDLRS(mesh_hdlrs),
+    [TASK_TWT]   = MSG_SUB_HDLRS(twt_hdlrs),
 #endif /* CONFIG_AML_SOFTMAC */
 };
 
@@ -2343,9 +2342,18 @@ static msg_cb_fct *msg_hdlrs[] = {
  */
 void aml_rx_handle_msg(struct aml_hw *aml_hw, struct ipc_e2a_msg *msg)
 {
-    aml_hw->cmd_mgr.msgind(&aml_hw->cmd_mgr, msg,
-                            msg_hdlrs[MSG_T(msg->id)][MSG_I(msg->id)]);
+    int type = MSG_T(msg->id);
+    int index = MSG_I(msg->id);
+
+    if (WARN_ON(type >= ARRAY_SIZE(msg_hdlrs)) ||
+        WARN_ON(index >= msg_hdlrs[type].max_index)) {
+        pr_err("%s: msg id %x (type %d, index %d) is out of rang!\n",
+                __func__, msg->id, type, index);
+        return;
+    }
+    aml_hw->cmd_mgr.msgind(&aml_hw->cmd_mgr, msg, msg_hdlrs[type].hdlrs[index]);
 }
+
 void aml_rx_sdio_ind_msg_handle(struct aml_hw *aml_hw, struct ipc_e2a_msg *msg)
 {
     if (msg->id == MM_CHANNEL_PRE_SWITCH_IND) {

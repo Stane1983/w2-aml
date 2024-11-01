@@ -25,7 +25,6 @@
 #include "aml_sap.h"
 #include "chip_intf_reg.h"
 #include "aml_compat.h"
-#include "aml_mdns_offload.h"
 
 const struct mac_addr mac_addr_bcst = {{0xFFFF, 0xFFFF, 0xFFFF}};
 
@@ -326,7 +325,6 @@ static inline void *aml_msg_zalloc(lmac_msg_id_t const id,
 {
     struct lmac_msg *msg;
     gfp_t flags;
-    uint16_t payl_len = param_len;
 
     if (is_non_blocking_msg(id) && in_softirq())
         flags = GFP_ATOMIC;
@@ -339,9 +337,7 @@ static inline void *aml_msg_zalloc(lmac_msg_id_t const id,
         }
     }
 
-    //make param_len ALIGN4 HI
-    payl_len = (((payl_len)+3)&~3);
-    msg = (struct lmac_msg *)kzalloc(sizeof(struct lmac_msg) + payl_len,
+    msg = (struct lmac_msg *)kzalloc(sizeof(struct lmac_msg) + param_len,
                                      flags);
     if (msg == NULL) {
         printk(KERN_CRIT "%s: msg allocation failed\n", __func__);
@@ -351,7 +347,7 @@ static inline void *aml_msg_zalloc(lmac_msg_id_t const id,
     msg->id = id;
     msg->dest_id = dest_id;
     msg->src_id = src_id;
-    msg->param_len = payl_len;
+    msg->param_len = param_len;
 
     /* coverity[leaked_storage] - msg will free in @aml_send_msg or in  @cmd_complete*/
     return msg->param;
@@ -402,31 +398,19 @@ static void aml_priv_msg_free(struct aml_hw *aml_hw, const void *msg_params)
 
     aml_msg_free(aml_hw, msg);
 }
-
 extern struct aml_bus_state_detect bus_state_detect;
 static int aml_send_msg(struct aml_hw *aml_hw, const void *msg_params,
                          int reqcfm, lmac_msg_id_t reqid, void *cfm)
 {
     struct lmac_msg *msg;
     struct aml_cmd *cmd;
-    struct mm_other_cmd *other_cmd;
     bool nonblock;
     bool call_thread;
     int ret;
-    uint32_t id;
+
+    AML_DBG(AML_FN_ENTRY_STR);
 
     msg = container_of((void *)msg_params, struct lmac_msg, param);
-    id = msg->id;
-    if (id == MM_OTHER_REQ) {
-        other_cmd = (struct mm_other_cmd *)msg_params;
-        id = other_cmd->mm_sub_index;
-    }
-
-    if (is_mdnsoffload_msg(id))
-        MDNS_OFFLOAD_DEBUG(AML_FN_ENTRY_STR);
-    else
-        AML_DBG(AML_FN_ENTRY_STR);
-
 #ifdef CONFIG_AML_RECOVERY
     if ((aml_bus_type != PCIE_MODE) && (bus_state_detect.bus_err)) {
         kfree(msg);
@@ -4068,7 +4052,7 @@ int aml_mdns_add_protocol_data_status(struct aml_hw *aml_hw, void *list_param, u
 
     if (!req)
         return -ENOMEM;
-    MDNS_OFFLOAD_DEBUG("%s ok exit   %d\n", __func__, __LINE__);
+    printk("%s ok exit   %d\n", __func__, __LINE__);
 
     if (list_len > MDNS_LIST_CRITERIA_MAX || data_len > MDNS_RAW_DATA_LENGTH_MAX) {
         aml_priv_msg_free(aml_hw, req);
@@ -4098,7 +4082,7 @@ int aml_mdns_add_protocol_data(struct aml_hw *aml_hw, void *list_param, uint8_t 
 
     if (!req)
         return -ENOMEM;
-    MDNS_OFFLOAD_DEBUG("%s ok exit   %d\n", __func__, __LINE__);
+    printk("%s ok exit   %d\n", __func__, __LINE__);
 
     req->index = index;
     memcpy(req->raw_offload_packet, raw_data, data_len);
@@ -4177,7 +4161,7 @@ int aml_mdns_add_passthrough_list(struct aml_hw *aml_hw, uint8_t *qname, int len
     if (ret != 0)
         return -1;
 
-    MDNS_OFFLOAD_DEBUG("state :%d", cfm.state);
+    AML_INFO("state :%d", cfm.state);
 
     return cfm.state;
 }

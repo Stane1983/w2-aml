@@ -20,8 +20,6 @@
 #include "wifi_top_addr.h"
 #include "sg_common.h"
 #include "aml_rps.h"
-#include "aml_mdns_offload.h"
-
 #ifdef CONFIG_AML_SOFTMAC
 #define FW_STR  "lmac"
 #elif defined CONFIG_AML_FULLMAC
@@ -30,8 +28,9 @@
 
 #define DGB_INFO_OFFSET (16) //for sdio and usb, sizeof(struct dma_desc)
 
+#ifdef CONFIG_AML_DEBUGFS
 extern struct log_file_info trace_log_file_info;
-
+#endif
 
 /**
  * aml_ipc_buf_pool_alloc() - Allocate and push to fw a pool of IPC buffer.
@@ -712,7 +711,7 @@ struct aml_ipc_buf *aml_ipc_rxbuf_from_hostid(struct aml_hw *aml_hw, u32 hostid)
 
         dev_err(aml_hw->dev, "Invalid Rx buff: hostid=%d addr=%p hostid_in_buff=%d\n",
                 hostid, buf->addr, (buf->addr) ? AML_RXBUFF_HOSTID_GET(buf): -1);
-#ifdef DEBUG_CODE
+#if 0
         if (buf->addr == NULL)
         {
             addr_null_happen = 1;
@@ -2027,17 +2026,12 @@ static u8 aml_msgind(void *pthis, void *arg)
 static u8 aml_msgackind(void *pthis, void *hostid)
 {
     struct aml_hw *aml_hw = (struct aml_hw *)pthis;
-    struct aml_cmd *cmd = (struct aml_cmd *)hostid;
-
     if (aml_hw->cmd_mgr.state & AML_CMD_MGR_STATE_DEINIT) {
         return 0;
     }
 
-    if (cmd->id == MM_OTHER_REQ && is_mdnsoffload_msg(cmd->mm_sub_id))
-        MDNS_OFFLOAD_DEBUG("msg ack hostid=0x%lx\n", hostid);
-    else
-        AML_INFO("msg ack hostid=0x%lx\n", hostid);
-    aml_hw->cmd_mgr.llind(&aml_hw->cmd_mgr, cmd);
+    AML_INFO("msg ack hostid=0x%lx\n", hostid);
+    aml_hw->cmd_mgr.llind(&aml_hw->cmd_mgr, (struct aml_cmd *)hostid);
 
     return -1;
 }
@@ -2279,6 +2273,7 @@ int aml_traceind(void *pthis, int mode)
     int ret = 0;
     uint32_t trace_max_size = 0;
 
+#ifdef CONFIG_AML_DEBUGFS
     mutex_lock(&trace_log_file_info.mutex);
 
     if (!trace_log_file_info.ptr)
@@ -2286,6 +2281,7 @@ int aml_traceind(void *pthis, int mode)
 
     memset(trace_log_file_info.ptr, 0, 33*1024);
     ptr_flag = trace_log_file_info.ptr;
+#endif
 
     if (aml_bus_type == USB_MODE) {
         aml_hw->plat->hif_ops->hi_read_sram((unsigned char *)ptr_flag, (unsigned char *)(SYS_TYPE)USB_TRACE_START_ADDR, USB_TRACE_TOTAL_SIZE, USB_EP4);
@@ -2297,6 +2293,7 @@ int aml_traceind(void *pthis, int mode)
         trace_max_size = SDIO_TRACE_MAX_SIZE;
     }
 
+#ifdef CONFIG_AML_DEBUGFS
     if (mode) {
         if (end >= (trace_max_size >> 1)) {
             ptr_limit = ptr_flag + end;
@@ -2323,10 +2320,13 @@ int aml_traceind(void *pthis, int mode)
     }
 
     mutex_unlock(&trace_log_file_info.mutex);
+#endif
 
     return 0;
 err:
+#ifdef CONFIG_AML_DEBUGFS
     mutex_unlock(&trace_log_file_info.mutex);
+#endif
 
     return -1;
 }
