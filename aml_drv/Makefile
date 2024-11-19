@@ -1,4 +1,4 @@
-AML_VERS_NUM=v1.9.8_2024-11.18-w2 driver:ebc3fa4f+493771
+AML_VERS_NUM=v1.9.9_2024-11.19-w2 driver:daba90760
 #KERNELDIR=/usr/lib/modules/5.8.0-63-generic/build
 PWD=$(shell pwd)
 ifeq ($(ARCH),)
@@ -112,8 +112,8 @@ CONFIG_AML_RX_MINISIZE ?= n
 #support NAPI
 CONFIG_AML_NAPI ?= y
 
-# support MDNS_OFFLOAD featrue
-CONFIG_MDNS_OFFLOAD_FEATRUE ?= y
+# support MDNS_OFFLOAD feature
+CONFIG_MDNS_OFFLOAD_FEATURE ?= y
 
 # Support 4.9 ax
 ifeq ($(CONFIG_AML_KERNEL_4_9),y)
@@ -121,6 +121,9 @@ CONFIG_KERNEL_AX_PATCH ?= y
 endif
 # } // NEED 4.9 PATCH
 #
+
+#support customer 11d forbidden
+CONFIG_CUSTOMER_11D_FORBIDDEN ?= y
 
 CONFIG_SDIO_TX_ENH ?= y
 
@@ -139,7 +142,7 @@ subdir-ccflags-$(CONFIG_AML_RX_MINISIZE) += -DCONFIG_AML_RX_MINISIZE
 subdir-ccflags-$(CONFIG_AML_NAPI) += -DCONFIG_AML_NAPI
 subdir-ccflags-$(CONFIG_KERNEL_AX_PATCH) += -DCONFIG_KERNEL_AX_PATCH
 subdir-ccflags-$(CONFIG_SDIO_TX_ENH) += -DCONFIG_SDIO_TX_ENH
-subdir-ccflags-$(CONFIG_MDNS_OFFLOAD_FEATRUE) += -DMDNS_OFFLOAD_FEATRUE
+subdir-ccflags-$(CONFIG_MDNS_OFFLOAD_FEATURE) += -DMDNS_OFFLOAD_FEATURE
 
 # FW VARS
 subdir-ccflags-y += -DNX_VIRT_DEV_MAX=4
@@ -159,6 +162,10 @@ endif
 
 ifeq ($(CONFIG_AML_ANDROID),14)
 subdir-ccflags-y += -DCONFIG_AML_ANDROID=$(CONFIG_AML_ANDROID)
+endif
+
+ifeq ($(CONFIG_CUSTOMER_11D_FORBIDDEN),y)
+subdir-ccflags-y += -DCONFIG_CUSTOMER_11D_FORBIDDEN
 endif
 
 obj-$(CONFIG_AML_FULLMAC) += fullmac/

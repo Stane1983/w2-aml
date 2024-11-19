@@ -31,5 +31,6 @@ int aml_config_cali_param(struct aml_hw *aml_hw);
 void aml_set_scan_hang(struct aml_vif *aml_vif, int scan_hang, u8* func, u32 line);
 u32 aml_pci_readl(u8* addr);
 void aml_pci_writel(u32 data, u8* addr);
+int aml_ps_wow_resume(struct aml_hw *aml_hw);
 
 #endif /* _AML_MAIN_H_ */

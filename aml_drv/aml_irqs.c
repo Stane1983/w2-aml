@@ -100,7 +100,11 @@ int aml_irq_task(void *data)
             USB_BEGIN_LOCK();
             if ((atomic_read(&g_wifi_pm.bus_suspend_cnt) == 0) && (atomic_read(&g_wifi_pm.is_shut_down) == 0) &&
                 (atomic_read(&g_wifi_pm.drv_suspend_cnt) == 0)) {
-                ret = usb_submit_urb(aml_hw->g_urb, GFP_ATOMIC);
+
+                if (aml_hw->g_urb->status != -EINPROGRESS)
+                {
+                    ret = usb_submit_urb(aml_hw->g_urb, GFP_ATOMIC);
+                }
             } else {
                 ret = 0;
             }

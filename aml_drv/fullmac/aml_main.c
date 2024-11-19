@@ -719,14 +719,30 @@ void aml_chanctx_unlink(struct aml_vif *vif)
     vif->ch_index = AML_CH_NOT_SET;
 }
 
-int aml_chanctx_valid(struct aml_hw *aml_hw, u8 ch_idx)
+int aml_chanctx_band(struct aml_hw *aml_hw, u8 ch_idx)
 {
-    if (ch_idx >= NX_CHAN_CTXT_CNT ||
-        aml_hw->chanctx_table[ch_idx].chan_def.chan == NULL) {
-        return 0;
+    struct ieee80211_channel *chan;
+
+    if (ch_idx < NX_CHAN_CTXT_CNT &&
+        (chan = aml_hw->chanctx_table[ch_idx].chan_def.chan)) {
+        return chan->band;
     }
 
-    return 1;
+    return -1;
+}
+
+bool aml_work_on_5g_band(struct aml_hw *aml_hw)
+{
+    struct aml_vif *vif;
+
+    list_for_each_entry(vif, &aml_hw->vifs, list) {
+        /* ignore down or vlan interface(s) */
+        if (!vif->up || AML_VIF_TYPE(vif) == NL80211_IFTYPE_AP_VLAN)
+            continue;
+        if (aml_chanctx_band(aml_hw, vif->ch_index) > NL80211_BAND_2GHZ)
+            return true;
+    }
+    return false;
 }
 
 static void aml_del_csa(struct aml_vif *vif)
@@ -2260,6 +2276,8 @@ static int aml_cfg80211_external_auth(struct wiphy *wiphy, struct net_device *de
         return -EINVAL;
 
     aml_external_auth_disable(aml_vif);
+    if ((params->status == 1) && (aml_vif->sta.auth_status != 0))
+        params->status = aml_vif->sta.auth_status;
     return aml_send_sm_external_auth_required_rsp(aml_hw, aml_vif,
                                                    params->status);
 }
@@ -4989,12 +5007,12 @@ int aml_wake_fw_req(struct aml_hw *aml_hw)
 }
 extern struct aml_pm_type g_wifi_pm;
 
-static int aml_ps_wow_resume(struct aml_hw *aml_hw)
+int aml_ps_wow_resume(struct aml_hw *aml_hw)
 {
     struct aml_vif *aml_vif;
     int error = 0;
     struct aml_txq *txq;
-    int ret;
+    int ret = 0;
     unsigned int reg_value;
     int cnt = 0;
 
@@ -5011,11 +5029,16 @@ static int aml_ps_wow_resume(struct aml_hw *aml_hw)
         if (atomic_read(&g_wifi_pm.drv_suspend_cnt)) {
             atomic_set(&g_wifi_pm.drv_suspend_cnt, 0);
             USB_BEGIN_LOCK();
-            ret = usb_submit_urb(aml_hw->g_urb, GFP_ATOMIC);
+            if (aml_hw->g_urb->status != -EINPROGRESS)
+            {
+                printk("%s need submit urb\n", __func__);
+                ret = usb_submit_urb(aml_hw->g_urb, GFP_ATOMIC);
+            }
             USB_END_LOCK();
             if (ret < 0) {
                 ERROR_DEBUG_OUT("usb_submit_urb failed %d\n", ret);
             }
+            printk("%s aml_hw->g_urb->status %d\n", __func__,aml_hw->g_urb->status);
         }
     }
 
@@ -5261,6 +5284,7 @@ static int aml_ps_wow_suspend(struct aml_hw *aml_hw, struct cfg80211_wowlan *wow
         atomic_set(&g_wifi_pm.drv_suspend_cnt, 1);
         if (aml_hw->g_urb->status != 0) {
             usb_kill_urb(aml_hw->g_urb);
+            printk("%s kill urb status %d\n", __func__, aml_hw->g_urb->status);
         }
         USB_END_LOCK();
     } else if (aml_bus_type == PCIE_MODE) {
@@ -5330,12 +5354,12 @@ static int aml_cfg80211_resume(struct wiphy *wiphy)
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
     if (aml_bus_type == PCIE_MODE) {
-        ret = request_irq(aml_hw->plat->pci_dev->irq, aml_irq_pcie_hdlr, 0,
-                              "aml", aml_hw);
+        ret = request_irq(aml_hw->plat->pci_dev->irq, aml_irq_pcie_hdlr, 0, "aml", aml_hw);
         AML_INFO("alloc irq:%d, ret:%d\n", aml_hw->plat->pci_dev->irq, ret);
     }
 #endif
 
+#if 1
     while (atomic_read(&g_wifi_pm.bus_suspend_cnt) > 0)
     {
         msleep(50);
@@ -5348,6 +5372,21 @@ static int aml_cfg80211_resume(struct wiphy *wiphy)
             return -1;
         }
     }
+#else
+    if ((atomic_read(&g_wifi_pm.bus_suspend_cnt) > 0) && (aml_bus_type == USB_MODE)) {
+        struct aml_wq *aml_wq;
+
+        aml_wq = aml_wq_alloc(0);
+        if (!aml_wq) {
+            AML_INFO("alloc workqueue out of memory");
+            return 0;
+        }
+        aml_wq->id = AML_WQ_WAIT_USB;
+        aml_wq_add(aml_hw, aml_wq);
+        return 0;
+    }
+#endif
+
     error = aml_ps_wow_resume(aml_hw);
     if (error){
         return error;
@@ -5840,7 +5879,7 @@ static int aml_get_cali_param(struct aml_hw *aml_hw, struct Cali_Param *cali_par
 
     len = aml_process_cali_content((char *)cfg_fw->data, cfg_fw->size);
     aml_parse_cali_param((char *)cfg_fw->data, len, cali_param);
-    if (cali_param->version != WIFI_CALI_VERSION) {
+    if (!((cali_param->version <= WIFI_CALI_VERSION) && (cali_param->version >= 17))) {
         AML_INFO("*******************************************************");
         AML_INFO("WARNING: rf cali file out of date, please update!!! ");
         AML_INFO("*******************************************************");
@@ -6489,6 +6528,10 @@ int aml_cfg80211_init(struct aml_plat *aml_plat, void **platform_data)
     wiphy->reg_notifier = aml_reg_notifier;
 
     aml_apply_regdom(aml_hw, wiphy, alpha2);
+#ifdef CONFIG_CUSTOMER_11D_FORBIDDEN
+    wiphy->regulatory_flags |= REGULATORY_COUNTRY_IE_IGNORE;
+    AML_INFO("set REGULATORY_COUNTRY_IE_IGNORE\n");
+#endif
 
     wiphy->signal_type = CFG80211_SIGNAL_TYPE_MBM;
 
@@ -6574,6 +6617,7 @@ int aml_cfg80211_init(struct aml_plat *aml_plat, void **platform_data)
         AML_INFO("alloc trace buf failed(%d)!\n", ret);
     }
 #endif
+
 #ifdef CONFIG_AML_RECOVERY
     aml_recy_init(aml_hw);
 #endif

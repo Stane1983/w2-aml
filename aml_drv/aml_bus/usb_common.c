@@ -14,6 +14,7 @@ struct usb_device *g_udev = NULL;
 struct aml_hwif_usb g_hwif_usb;
 unsigned char auc_driver_insmoded;
 unsigned char auc_wifi_in_insmod;
+unsigned char g_chip_function_ctrl = 0;
 unsigned char g_usb_after_probe;
 struct crg_msc_cbw *g_cmd_buf = NULL;
 struct mutex auc_usb_mutex;
@@ -245,3 +246,5 @@ EXPORT_SYMBOL(g_usb_after_probe);
 EXPORT_SYMBOL(bt_wt_ptr);
 EXPORT_SYMBOL(bt_rd_ptr);
 EXPORT_SYMBOL(coex_flag);
+EXPORT_SYMBOL(g_chip_function_ctrl);
+

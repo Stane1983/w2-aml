@@ -4231,9 +4231,7 @@ int aml_set_fwlog_cmd(struct net_device *dev, int mode)
         }
         aml_send_fwlog_cmd(aml_vif, mode);
         if (aml_bus_type == USB_MODE) {
-#ifdef CONFIG_AML_DEBUGFS
             aml_dbgfs_fw_trace_create(aml_vif->aml_hw);
-#endif
         }
     } else {
         AML_INFO("bus_type err or trace_log_file_info init failed!");
@@ -4386,6 +4384,13 @@ static int aml_set_tcp_tcp_ack_window_scaling(struct net_device *dev, int win_sc
     }
     ack_mgr->window_scaling = win_scal;;
     printk("set tcp ack:window_scaling=%x\n", ack_mgr->window_scaling);
+    return 0;
+}
+
+static int aml_set_mdns_offload_debug(struct net_device *dev, int debug)
+{
+    printk("set mdns offload debug:%d\n", debug);
+    g_mdns_offload_debug = debug;
     return 0;
 }
 
@@ -4859,6 +4864,9 @@ static int aml_iwpriv_send_para1(struct net_device *dev,
             break;
         case AML_IWP_SET_TCP_ACK_WINDOW_SCALE:
              aml_set_tcp_tcp_ack_window_scaling(dev, set1);
+             break;
+        case AML_IWP_SET_MDNS_OFFLOAD_DEBUG:
+             aml_set_mdns_offload_debug(dev, set1);
              break;
         default:
             printk("%s %d: param err\n", __func__, __LINE__);
@@ -5638,6 +5646,9 @@ static const struct iw_priv_args aml_iwpriv_private_args[] = {
     {
         AML_IWP_SET_TCP_ACK_WINDOW_SCALE,
         IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 1, 0, "set_tcp_ack_ws"},
+    {
+        AML_IWP_SET_MDNS_OFFLOAD_DEBUG,
+        IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 1, 0, "set_mdns_debug"},
     {
         SIOCIWFIRSTPRIV + 2,
         IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 2, 0, ""},

@@ -72,7 +72,7 @@
 
 // WIFI_CALI_VERSION must be consistent with the version field in "/vendor/firmware/"
 // After updating the parameters, it must be modified at the same time.
-#define WIFI_CALI_VERSION   (17)
+#define WIFI_CALI_VERSION   (18)
 #define WIFI_CALI_FILENAME  "aml_wifi_rf.txt"
 
 #define STRUCT_BUFF_LEN   252
@@ -340,6 +340,7 @@ struct aml_vif {
             u8 assoc_ssid[MAC_SSID_LEN];
             int assoc_ssid_len;
             u8 connect_flags;
+            u16 auth_status;
         } sta;
         struct
         {
@@ -1035,7 +1036,15 @@ u8 *aml_build_bcn(struct aml_bcn *bcn, struct cfg80211_beacon_data *new);
 void aml_chanctx_link(struct aml_vif *vif, u8 idx,
                         struct cfg80211_chan_def *chandef);
 void aml_chanctx_unlink(struct aml_vif *vif);
-int  aml_chanctx_valid(struct aml_hw *aml_hw, u8 idx);
+
+int aml_chanctx_band(struct aml_hw *aml_hw, u8 ch_idx);
+
+static inline int aml_chanctx_valid(struct aml_hw *aml_hw, u8 ch_idx)
+{
+    return aml_chanctx_band(aml_hw, ch_idx) >= 0;
+}
+
+bool aml_work_on_5g_band(struct aml_hw *aml_hw);
 
 static inline bool is_multicast_sta(int sta_idx)
 {

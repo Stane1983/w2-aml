@@ -711,7 +711,7 @@ struct aml_ipc_buf *aml_ipc_rxbuf_from_hostid(struct aml_hw *aml_hw, u32 hostid)
 
         dev_err(aml_hw->dev, "Invalid Rx buff: hostid=%d addr=%p hostid_in_buff=%d\n",
                 hostid, buf->addr, (buf->addr) ? AML_RXBUFF_HOSTID_GET(buf): -1);
-#if 0
+#ifdef DEBUG_CODE
         if (buf->addr == NULL)
         {
             addr_null_happen = 1;

@@ -25,6 +25,7 @@
 #include "aml_sap.h"
 #include "chip_intf_reg.h"
 #include "aml_compat.h"
+#include "aml_mdns_offload.h"
 
 const struct mac_addr mac_addr_bcst = {{0xFFFF, 0xFFFF, 0xFFFF}};
 
@@ -4046,8 +4047,7 @@ int aml_mdns_reset_all(struct aml_hw *aml_hw)
     return aml_priv_send_msg(aml_hw, req, 0, 0, NULL);
 }
 
-int aml_mdns_add_protocol_data_status(struct aml_hw *aml_hw, void *list_param, uint8_t list_len,
-                                uint16_t data_len)
+int aml_mdns_add_protocol_data_status(struct aml_hw *aml_hw, void *list_param, mdnsProtocolData *offloadData, int *index)
 {
     struct mdns_adddata_cfm cfm;
     int ret;
@@ -4055,29 +4055,33 @@ int aml_mdns_add_protocol_data_status(struct aml_hw *aml_hw, void *list_param, u
 
     if (!req)
         return -ENOMEM;
-    printk("%s ok exit   %d\n", __func__, __LINE__);
 
-    if (list_len > MDNS_LIST_CRITERIA_MAX || data_len > MDNS_RAW_DATA_LENGTH_MAX) {
+    MDNS_OFFLOAD_DEBUG("%s ok exit   %d\n", __func__, __LINE__);
+
+    if ((offloadData->matchCriteriaListNum > MDNS_LIST_CRITERIA_MAX)
+        || (offloadData->rawOffloadPacketLen > MDNS_RAW_DATA_LENGTH_MAX)) {
         aml_priv_msg_free(aml_hw, req);
         return -ENOMEM;
     }
 
-    req->list_len = list_len;
-    req->data_len = data_len;
+    req->list_len = offloadData->matchCriteriaListNum;
+    req->data_len = offloadData->rawOffloadPacketLen;
 
-    memcpy(req->list_criteria, list_param, list_len * sizeof(struct match_criteria));
+    memcpy(req->list_criteria, list_param, req->list_len * sizeof(struct match_criteria));
 
     ret = aml_priv_send_msg(aml_hw, req, 1, PRIV_MDNS_ADDDATA_CFM, &cfm);
     if (ret != 0)
         return ret;
 
     if (cfm.state != CO_OK)
-        return -1;
+        return -EPERM;
 
-    return cfm.index;
+    *index = cfm.index;
+
+    return 0;
 }
 
-int aml_mdns_add_protocol_data(struct aml_hw *aml_hw, void *list_param, uint8_t *raw_data, uint8_t index, uint16_t data_len)//开机时设置
+int aml_mdns_add_protocol_data(struct aml_hw *aml_hw, uint8_t *raw_data, uint8_t index, uint16_t data_len)
 {
 
     int ret;
@@ -4085,7 +4089,7 @@ int aml_mdns_add_protocol_data(struct aml_hw *aml_hw, void *list_param, uint8_t 
 
     if (!req)
         return -ENOMEM;
-    printk("%s ok exit   %d\n", __func__, __LINE__);
+    MDNS_OFFLOAD_DEBUG("%s ok exit   %d\n", __func__, __LINE__);
 
     req->index = index;
     memcpy(req->raw_offload_packet, raw_data, data_len);
@@ -4113,6 +4117,9 @@ int aml_mdns_get_reset_hit_counter(struct aml_hw *aml_hw, int index)
     struct mdns_get_hit_cfm cfm;
     struct mm_mdns_get_hit *req;
     int ret;
+
+    if (index >= MDNS_DATA_MAX)
+        return -ENOMEM;
 
     req = aml_priv_msg_zalloc(MDNS_GET_HIT, sizeof(struct mm_mdns_get_hit));
     if (!req)
@@ -4164,7 +4171,7 @@ int aml_mdns_add_passthrough_list(struct aml_hw *aml_hw, uint8_t *qname, int len
     if (ret != 0)
         return -1;
 
-    AML_INFO("state :%d", cfm.state);
+    MDNS_OFFLOAD_DEBUG("state :%d", cfm.state);
 
     return cfm.state;
 }
@@ -4304,7 +4311,7 @@ int aml_send_notify_ip(struct aml_vif *aml_vif, u8_l ip_ver, u8_l *ip_addr)
     notify_ip_addr_t *notify_ip_addr;
 
     if (!aml_vif) {
-        printk("aml vif param invald\n");
+        printk("aml vif param invalid\n");
         return -EINVAL;
     }
     aml_hw = aml_vif->aml_hw;

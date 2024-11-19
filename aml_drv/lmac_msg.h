@@ -80,6 +80,7 @@ enum
 
 #define MDNS_RAW_DATA_LENGTH_MAX    492
 #define MDNS_LIST_CRITERIA_MAX      8
+#define MDNS_DATA_MAX 3
 #define MDNS_QNAME_LENGTH_MAX       80
 
 /// For MAC HW States copied from "hal_machw.h"

@@ -33,6 +33,7 @@ enum aml_wq_type {
 #endif
     AML_WQ_IPV6,
     AML_WQ_CANCEL_SCAN,
+    AML_WQ_WAIT_USB,
     AML_WQ_MAX,
 };
 

@@ -595,18 +595,31 @@ int aml_replace_tcp_ack(struct sk_buff *skb,
     return ret;
 }
 
+/* return zero if no change */
 int aml_set_tcp_ack_accord_to_rssi(struct aml_sta *sta, struct aml_hw *aml_hw, s32_l rssi)
 {
     struct aml_tcp_sess_mgr *ack_mgr = &aml_hw->ack_mgr;
-    if (aml_bus_type == USB_MODE && sta->band == NL80211_BAND_2GHZ) {
-        if (rssi < ack_mgr->rssi_l_thr && atomic_read(&ack_mgr->enable)) {
-            atomic_set(&ack_mgr->enable, 0);
-            printk("%s, %d set enable 0\n", __func__, __LINE__);
-        } else if (rssi > ack_mgr->rssi_h_thr && !atomic_read(&ack_mgr->enable)) {
-            atomic_set(&ack_mgr->enable, 1);
-            printk("%s, %d set enable 1\n", __func__, __LINE__);
-        }
-    }
+    bool enable = false;
+
+    if (aml_bus_type != USB_MODE)   /* only effect on USB device */
+        return 0;
+
+    if (aml_work_on_5g_band(aml_hw))
+        enable = true;  /* force to enable it if work on 5GHz band */
+    else if (rssi > ack_mgr->rssi_h_thr)
+        enable = true;  /* enable it if rssi is good enough */
+    else if (rssi >= ack_mgr->rssi_l_thr)
+        return 0;       /* no change if rssi in range[rssi_l_thr, rssi_h_thr] */
+    else
+        enable = false; /* rssi is worse, disable it */
+
+    if (enable == !!atomic_read(&ack_mgr->enable))
+        return 0;
+
+    atomic_set(&ack_mgr->enable, enable);
+    /* printk("%s, set enable %d\n", __func__, enable); */
+
+    return 1;
 }
 
 int aml_filter_tx_tcp_ack(struct net_device *dev,

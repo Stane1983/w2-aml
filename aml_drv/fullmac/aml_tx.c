@@ -1448,6 +1448,11 @@ uint32_t aml_filter_sp_mgmt_frame(struct aml_vif *vif, u8 *buf, AML_SP_STATUS_E 
             offset += sprintf(p + offset, "auth algo:%d ", auth_algo);
             p[offset] = '\0';
             printk("%s\n", p);
+            if ((AML_VIF_TYPE(vif) == NL80211_IFTYPE_STATION) && (vif->sta.flags & AML_STA_EXT_AUTH)) {
+                u8 *p = buf + AUTH_ALGO_OFFSET;
+                vif->sta.auth_status = (*(p + 4) | *(p + 5) << 8);
+                printk("auth status %d\n", vif->sta.auth_status);
+            }
             return ret;
         }
         case ASSOC_RSP_TYPE: {

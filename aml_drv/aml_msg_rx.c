@@ -35,6 +35,7 @@
 #include "aml_recy.h"
 
 extern bool pt_mode;
+extern struct aml_pm_type g_wifi_pm;
 
 int aml_freq_to_idx(struct aml_hw *aml_hw, int freq)
 {
@@ -2095,6 +2096,10 @@ static inline int aml_suspend_ind(struct aml_hw *aml_hw,
                                   struct ipc_e2a_msg *msg)
 {
     aml_hw->suspend_ind = SUSPEND_IND_RECV;
+    if (aml_bus_type == USB_MODE)
+    {
+        atomic_set(&g_wifi_pm.drv_suspend_cnt, 1);
+    }
     printk("%s %d\n", __func__, __LINE__);
     return 0;
 }
