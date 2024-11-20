@@ -36,6 +36,7 @@
 #include "aml_compat.h"
 #include "aml_task.h"
 #include "aml_tcp_ack.h"
+#include <linux/wireless.h>
 
 #define WPI_HDR_LEN    18
 #define WPI_PN_LEN     16
@@ -322,6 +323,7 @@ struct aml_vif {
     /* protect union sta/ap content */
     spinlock_t vif_lock;
     struct tx_cfm_wait_rsp tx_cfm_wait;
+    struct iw_statistics wstats;
     union
     {
         struct

@@ -36,7 +36,7 @@
 
 extern bool pt_mode;
 
-static int aml_freq_to_idx(struct aml_hw *aml_hw, int freq)
+int aml_freq_to_idx(struct aml_hw *aml_hw, int freq)
 {
     struct ieee80211_supported_band *sband;
     int band, ch, idx = 0;

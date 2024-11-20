@@ -5208,8 +5208,192 @@ int iw_standard_set_mode(struct net_device *dev, struct iw_request_info *info,
     return 0;
 }
 
+#define IFNAMSIZ 16
+
+int iw_standard_get_name(struct net_device *dev, struct iw_request_info *info,
+     union iwreq_data *wrqu, char *extra)
+{
+    struct aml_vif *aml_vif = netdev_priv(dev);
+    struct aml_hw *aml_hw = aml_vif->aml_hw;
+    enum nl80211_iftype iftype;
+
+    list_for_each_entry(aml_vif, &aml_hw->vifs, list) {
+        if (!aml_vif->up || aml_vif->ndev == NULL) {
+            continue;
+        }
+        iftype = AML_VIF_TYPE(aml_vif);
+
+        if (iftype == NL80211_IFTYPE_STATION) {
+
+            if (aml_vif->sta.ap && aml_vif->sta.ap->valid) {
+                switch (aml_vif->sta.ap->stats.format_mod) {
+                    case FORMATMOD_NON_HT:
+                    case FORMATMOD_NON_HT_DUP_OFDM:
+                        snprintf(wrqu->name, IFNAMSIZ,
+                            (aml_vif->sta.ap->band == NL80211_BAND_5GHZ) ? "IEEE 802.11a" : "IEEE 802.11bg");
+                        break;
+                    case FORMATMOD_HT_MF:
+                        snprintf(wrqu->name, IFNAMSIZ, "IEEE 802.11bgn");
+                        break;
+                    case FORMATMOD_HT_GF:
+                        snprintf(wrqu->name, IFNAMSIZ, "IEEE 802.11n");
+                        break;
+                    case FORMATMOD_VHT:
+                        snprintf(wrqu->name, IFNAMSIZ, "IEEE 802.11ac");
+                        break;
+                    default:
+                        snprintf(wrqu->name, IFNAMSIZ, "IEEE 802.11ax");
+                        break;
+                }
+            } else {
+                snprintf(wrqu->name, IFNAMSIZ, "unassociated");
+            }
+        }
+    }
+    return 0;
+}
+
+int iw_standard_get_range(struct net_device *dev, struct iw_request_info *info,
+    union iwreq_data *wrqu, char *extra)
+{
+    struct iw_range * range = (struct iw_range *)extra;
+
+    memset(range, 0 , sizeof(*range));
+    range->throughput = 20000000; /*20Mbps*/
+    range->min_nwid = 0;
+    range->max_nwid = 0;
+    range->we_version_compiled  = WIRELESS_EXT;
+    range->we_version_source = WIRELESS_EXT;
+
+    return 0;
+}
+
+
+int iw_standard_get_ap(struct net_device *dev, struct iw_request_info *info,
+    union iwreq_data *wrqu, char *extra)
+{
+    struct aml_vif *aml_vif = netdev_priv(dev);
+    struct aml_hw *aml_hw = aml_vif->aml_hw;
+    enum nl80211_iftype iftype;
+
+    struct sockaddr * addr = &(wrqu->ap_addr);
+    list_for_each_entry(aml_vif, &aml_hw->vifs, list) {
+         if (!aml_vif->up || aml_vif->ndev == NULL) {
+             continue;
+         }
+         iftype = AML_VIF_TYPE(aml_vif);
+
+         if (iftype == NL80211_IFTYPE_STATION) {
+            if (aml_vif->sta.ap && aml_vif->sta.ap->valid) {
+                memcpy(addr->sa_data, aml_vif->sta.ap->mac_addr, ETH_ALEN);
+            }
+         }
+    }
+
+    return 0;
+}
+
+int iw_standard_get_essid(struct net_device *dev, struct iw_request_info *info,
+    union iwreq_data *wrqu, char *extra)
+{
+    struct iw_point * essid = &(wrqu->essid);
+    struct aml_vif *aml_vif = netdev_priv(dev);
+    struct aml_hw *aml_hw = aml_vif->aml_hw;
+    enum nl80211_iftype iftype;
+
+    list_for_each_entry(aml_vif, &aml_hw->vifs, list) {
+         if (!aml_vif->up || aml_vif->ndev == NULL) {
+             continue;
+         }
+         iftype = AML_VIF_TYPE(aml_vif);
+
+         if (iftype == NL80211_IFTYPE_STATION) {
+            if (aml_vif->sta.ap && aml_vif->sta.ap->valid) {
+                essid->length = aml_vif->sta.assoc_ssid_len;
+                memcpy(extra, aml_vif->sta.assoc_ssid, aml_vif->sta.assoc_ssid_len);
+                essid->flags = 1;
+            }
+         }
+    }
+    return 0;
+}
+
+int iw_standard_get_stats(struct net_device *dev, struct iw_request_info *info,
+    union iwreq_data *wrqu, char *extra)
+{
+    return 0;
+}
+
+extern int aml_freq_to_idx(struct aml_hw *aml_hw, int freq);
+static struct iw_statistics *aml_get_wireless_stats(struct net_device *dev)
+{
+    struct aml_vif *aml_vif = netdev_priv(dev);
+    struct aml_hw *aml_hw = aml_vif->aml_hw;
+    struct iw_statistics *wstats = &aml_vif->wstats;
+    struct aml_survey_info * aml_survey;
+    enum nl80211_iftype iftype;
+
+    list_for_each_entry(aml_vif, &aml_hw->vifs, list) {
+        if (!aml_vif->up || aml_vif->ndev == NULL) {
+             continue;
+        }
+        iftype = AML_VIF_TYPE(aml_vif);
+
+        if (iftype == NL80211_IFTYPE_STATION) {
+            if (aml_vif->sta.ap && aml_vif->sta.ap->valid) {
+                aml_survey = &aml_hw->survey[aml_freq_to_idx(aml_hw, aml_vif->sta.ap->center_freq)];
+                wstats->qual.qual = 0;
+                wstats->qual.level = AML_REG_READ(aml_hw->plat, AML_ADDR_MAC_PHY, REG_OF_SYNC_RSSI) & 0xffff - 256;
+                wstats->qual.noise = aml_survey->noise_dbm;
+                wstats->qual.updated = IW_QUAL_ALL_UPDATED | IW_QUAL_DBM;
+            }
+            else
+            {
+                wstats->qual.qual = 0;
+                wstats->qual.level = 0;
+                wstats->qual.noise = 0;
+                wstats->qual.updated = IW_QUAL_ALL_UPDATED | IW_QUAL_DBM;
+            }
+        }
+    }
+
+    return wstats;
+}
+
+int iw_standard_get_freq(struct net_device *dev, struct iw_request_info *info,
+    union iwreq_data *wrqu, char *extra)
+{
+    struct iw_freq * pr_iw_freq = &(wrqu->freq);
+    struct aml_vif *aml_vif = netdev_priv(dev);
+    struct aml_hw *aml_hw = aml_vif->aml_hw;
+    enum nl80211_iftype iftype;
+
+
+    list_for_each_entry(aml_vif, &aml_hw->vifs, list) {
+        if (!aml_vif->up || aml_vif->ndev == NULL) {
+            continue;
+        }
+        iftype = AML_VIF_TYPE(aml_vif);
+
+        if (iftype == NL80211_IFTYPE_STATION) {
+
+            if (aml_vif->sta.ap && aml_vif->sta.ap->valid) {
+                pr_iw_freq->m = aml_vif->sta.ap->center_freq;
+                pr_iw_freq->e = 6;
+            }
+        }
+    }
+     return 0;
+ }
+
 static const iw_handler standard_handler[] = {
     IW_HANDLER(SIOCSIWMODE,    (iw_handler)iw_standard_set_mode),
+    IW_HANDLER(SIOCGIWNAME,    (iw_handler)iw_standard_get_name),
+    IW_HANDLER(SIOCGIWRANGE,   (iw_handler)iw_standard_get_range),
+    IW_HANDLER(SIOCGIWAP,      (iw_handler)iw_standard_get_ap),
+    IW_HANDLER(SIOCGIWESSID,   (iw_handler)iw_standard_get_essid),
+    IW_HANDLER(SIOCGIWSTATS,   (iw_handler)iw_standard_get_stats),
+    IW_HANDLER(SIOCGIWFREQ,    (iw_handler)iw_standard_get_freq),
     NULL,
 };
 
@@ -5633,6 +5817,7 @@ struct iw_handler_def iw_handle = {
     .standard = (iw_handler *)standard_handler,
     .private = aml_iwpriv_private_handler,
     .private_args = aml_iwpriv_private_args,
+    .get_wireless_stats = aml_get_wireless_stats,
 #endif
 };
 
