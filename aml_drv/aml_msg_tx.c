@@ -325,6 +325,7 @@ static inline void *aml_msg_zalloc(lmac_msg_id_t const id,
 {
     struct lmac_msg *msg;
     gfp_t flags;
+    uint16_t payl_len = param_len;
 
     if (is_non_blocking_msg(id) && in_softirq())
         flags = GFP_ATOMIC;
@@ -337,7 +338,9 @@ static inline void *aml_msg_zalloc(lmac_msg_id_t const id,
         }
     }
 
-    msg = (struct lmac_msg *)kzalloc(sizeof(struct lmac_msg) + param_len,
+    //make param_len ALIGN4 HI
+    payl_len = (((payl_len)+3)&~3);
+    msg = (struct lmac_msg *)kzalloc(sizeof(struct lmac_msg) + payl_len,
                                      flags);
     if (msg == NULL) {
         printk(KERN_CRIT "%s: msg allocation failed\n", __func__);
@@ -347,7 +350,7 @@ static inline void *aml_msg_zalloc(lmac_msg_id_t const id,
     msg->id = id;
     msg->dest_id = dest_id;
     msg->src_id = src_id;
-    msg->param_len = param_len;
+    msg->param_len = payl_len;
 
     /* coverity[leaked_storage] - msg will free in @aml_send_msg or in  @cmd_complete*/
     return msg->param;
