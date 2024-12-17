@@ -1460,7 +1460,7 @@ static inline int aml_rx_sm_connect_ind(struct aml_hw *aml_hw,
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
                 if (ind->status_code != 0 && aml_vif->wdev.connected) {
                     AML_INFO("roam connect fail, need upload disconnect to kernel to clear wdev.connected\n");
-                    cfg80211_disconnected(dev, 0, NULL, 0, false, GFP_KERNEL);
+                    cfg80211_disconnected(dev, 0, NULL, 0, false, GFP_ATOMIC);
                 }
 #endif
             }
