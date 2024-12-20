@@ -1,4 +1,4 @@
-AML_VERS_NUM=v1.9.9_2024-11.19-w2 driver:daba90760
+AML_VERS_NUM=v1.9.10_2024-12.20-w2 driver:daba90760
 #KERNELDIR=/usr/lib/modules/5.8.0-63-generic/build
 PWD=$(shell pwd)
 ifeq ($(ARCH),)
@@ -98,6 +98,12 @@ CONFIG_AML_WFA_CERT_MODE ?= n
 # Config to enable Power_Save mode
 CONFIG_AML_POWER_SAVE_MODE ?= n
 
+# Config to enable GOOGLE_CAST wake host
+CONFIG_AML_WOW_GOOGLE_CAST_EN ?= n
+
+# Config to enable MAGIC_PKT wake host
+CONFIG_AML_WOW_MAGIC_PACKET_EN ?= n
+
 # Support to use tasks to process IRQ Handlers
 CONFIG_AML_USE_TASK ?= y
 
@@ -143,6 +149,8 @@ subdir-ccflags-$(CONFIG_AML_NAPI) += -DCONFIG_AML_NAPI
 subdir-ccflags-$(CONFIG_KERNEL_AX_PATCH) += -DCONFIG_KERNEL_AX_PATCH
 subdir-ccflags-$(CONFIG_SDIO_TX_ENH) += -DCONFIG_SDIO_TX_ENH
 subdir-ccflags-$(CONFIG_MDNS_OFFLOAD_FEATURE) += -DMDNS_OFFLOAD_FEATURE
+subdir-ccflags-$(CONFIG_AML_WOW_GOOGLE_CAST_EN) += -DAML_WOW_GOOGLE_CAST_EN
+subdir-ccflags-$(CONFIG_AML_WOW_MAGIC_PACKET_EN) += -DAML_WOW_MAGIC_PACKET_EN
 
 # FW VARS
 subdir-ccflags-y += -DNX_VIRT_DEV_MAX=4

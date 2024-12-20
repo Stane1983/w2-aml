@@ -478,6 +478,26 @@ enum mm_sub_a2e_tag {
     /// New members cannot be added below
 };
 
+static inline int is_mdnsoffload_msg(uint32_t id)
+{
+    switch (id) {
+    case MDNS_SET_STATE:
+    case MDNS_SET_BEHAVIOR:
+    case MDNS_ADD_PROTOCOL:
+    case MDNS_REMOVE_PROTOCOL:
+    case MDNS_GET_HIT:
+    case MDNS_GET_MISS:
+    case MDNS_ADD_PASS_LIST:
+    case MDNS_REMOVE_PASS_LIST:
+    case MDNS_RESET_ALL:
+    case MDNS_ADD_PROTOCOL_STATUS:
+        return 1;
+	default:
+        return 0;
+    }
+    return 0;
+}
+
 /// Interface types
 enum
 {

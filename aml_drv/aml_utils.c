@@ -20,6 +20,7 @@
 #include "wifi_top_addr.h"
 #include "sg_common.h"
 #include "aml_rps.h"
+#include "aml_mdns_offload.h"
 #ifdef CONFIG_AML_SOFTMAC
 #define FW_STR  "lmac"
 #elif defined CONFIG_AML_FULLMAC
@@ -711,7 +712,7 @@ struct aml_ipc_buf *aml_ipc_rxbuf_from_hostid(struct aml_hw *aml_hw, u32 hostid)
 
         dev_err(aml_hw->dev, "Invalid Rx buff: hostid=%d addr=%p hostid_in_buff=%d\n",
                 hostid, buf->addr, (buf->addr) ? AML_RXBUFF_HOSTID_GET(buf): -1);
-#ifdef DEBUG_CODE
+#if 0
         if (buf->addr == NULL)
         {
             addr_null_happen = 1;
@@ -2026,12 +2027,16 @@ static u8 aml_msgind(void *pthis, void *arg)
 static u8 aml_msgackind(void *pthis, void *hostid)
 {
     struct aml_hw *aml_hw = (struct aml_hw *)pthis;
+    struct aml_cmd *cmd = (struct aml_cmd *)hostid;
     if (aml_hw->cmd_mgr.state & AML_CMD_MGR_STATE_DEINIT) {
         return 0;
     }
 
-    AML_INFO("msg ack hostid=0x%lx\n", hostid);
-    aml_hw->cmd_mgr.llind(&aml_hw->cmd_mgr, (struct aml_cmd *)hostid);
+    if (cmd->id == MM_OTHER_REQ && is_mdnsoffload_msg(cmd->mm_sub_id))
+        MDNS_OFFLOAD_DEBUG("msg ack hostid=0x%lx\n", hostid);
+    else
+        AML_INFO("msg ack hostid=0x%lx\n", hostid);
+    aml_hw->cmd_mgr.llind(&aml_hw->cmd_mgr, cmd);
 
     return -1;
 }

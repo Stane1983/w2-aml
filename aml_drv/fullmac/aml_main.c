@@ -1829,11 +1829,6 @@ static int aml_cfg80211_scan(struct wiphy *wiphy,
         return -EAGAIN;
     }
 
-    if (aml_connect_flags_chk(aml_vif, AML_GETTING_IP)) {
-        printk("dhcp is ongoing, can't scan now!\n");
-        return -EBUSY;
-    }
-
     if ((aml_hw->traffic_busy) && (time_after(jiffies, last_time + msecs_to_jiffies(AML_SCAN_INTERNAL_THR)))) {
         AML_INFO("abort scan,traffic busy\n");
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0)
@@ -5174,6 +5169,16 @@ static int aml_ps_wow_suspend(struct aml_hw *aml_hw, struct cfg80211_wowlan *wow
                 } else {
                     aml_pwrsave_wow_sta(aml_hw, aml_vif);
                 }
+                if (aml_hw->google_cast == 1)
+                    filter |= WOW_FILTER_OPTION_GOOGLE_CAST_EN;
+#ifdef AML_WOW_GOOGLE_CAST_EN
+                else
+                    filter |= WOW_FILTER_OPTION_GOOGLE_CAST_EN;
+#endif
+
+#ifdef AML_WOW_MAGIC_PACKET_EN
+                    filter |= WOW_FILTER_OPTION_MAGIC_PACKET;
+#endif
                 aml_vif->filter = filter;
                 aml_send_dhcp_req(aml_hw, aml_vif, 1);
 
@@ -5233,9 +5238,6 @@ static int aml_ps_wow_suspend(struct aml_hw *aml_hw, struct cfg80211_wowlan *wow
     aml_send_me_set_ps_mode(aml_hw, MM_PS_MODE_ON);
 
     aml_hw->state = WIFI_SUSPEND_STATE_WOW;
-
-    if (aml_hw->google_cast == 1)
-        filter |= WOW_FILTER_OPTION_GOOGLE_CAST_EN;
 
     error = aml_send_suspend_req(aml_hw, filter, WIFI_SUSPEND_STATE_WOW);
     if (error) {

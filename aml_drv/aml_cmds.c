@@ -20,6 +20,7 @@
 #include "aml_interface.h"
 #include "aml_mdns_offload.h"
 #include "aml_msg_rx.h"
+#include "aml_mdns_offload.h"
 
 extern unsigned int aml_bus_type;
 extern char *bus_type;
@@ -37,16 +38,20 @@ static void cmd_dump(const struct aml_cmd *cmd)
 #endif
 }
 
+#define CMD_PRINT_STR "[%-20.20s %4d] cmd tkn[%d]  flags:%04x  result:%3d  cmd:%4d-%-24s - reqcfm(%4d-%-s)\n", \
+	__func__, __LINE__,  \
+	cmd->tkn, cmd->flags, cmd->result, cmd->id, cmd->id == MM_OTHER_REQ ? AML_MM_OTHER_CMD2STR(cmd) : AML_ID2STR(cmd->id), \
+	cmd->reqid, (((cmd->flags & AML_CMD_FLAG_REQ_CFM) && \
+	(cmd->reqid != (lmac_msg_id_t)-1)) ? AML_ID2STR(cmd->reqid) : "none")
+
 #define CMD_PRINT(cmd) do { \
     if (cmd->id != ME_TRAFFIC_IND_REQ) { \
-        printk("[%-20.20s %4d] cmd tkn[%d]  flags:%04x  result:%3d  cmd:%4d-%-24s - reqcfm(%4d-%-s)\n", \
-               __func__, __LINE__,  \
-               cmd->tkn, cmd->flags, cmd->result, cmd->id, cmd->id == MM_OTHER_REQ ? AML_MM_OTHER_CMD2STR(cmd) : AML_ID2STR(cmd->id), \
-               cmd->reqid, (((cmd->flags & AML_CMD_FLAG_REQ_CFM) && \
-               (cmd->reqid != (lmac_msg_id_t)-1)) ? AML_ID2STR(cmd->reqid) : "none")); \
+        if (cmd->id == MM_OTHER_REQ && is_mdnsoffload_msg(cmd->mm_sub_id)) \
+            MDNS_OFFLOAD_DEBUG(CMD_PRINT_STR); \
+        else \
+            printk(CMD_PRINT_STR); \
     } \
 } while (0);
-
 /**
  *
  */
@@ -109,13 +114,17 @@ int aml_msg_task(void *data)
 
         if (cmd != NULL) {
             CMD_PRINT(cmd);
+            spin_lock_bh(&cmd_mgr->lock);
             cmd->flags &= ~AML_CMD_FLAG_WAIT_PUSH;
+            spin_unlock_bh(&cmd_mgr->lock);
 
             trace_msg_send(cmd->id);
             aml_ipc_msg_push(aml_hw, cmd, AML_CMD_A2EMSG_LEN(cmd->a2e_msg));
             spin_lock_bh(&cmd_mgr->lock);
-            if (cmd->a2e_msg)
+            if (cmd->a2e_msg) {
                 kfree(cmd->a2e_msg);
+                cmd->a2e_msg = NULL;
+            }
             spin_unlock_bh(&cmd_mgr->lock);
         }
     }
@@ -216,16 +225,22 @@ static int cmd_mgr_queue(struct aml_cmd_mgr *cmd_mgr, struct aml_cmd *cmd)
     spin_unlock_bh(&cmd_mgr->lock);
 
     if (!defer_push) {
+        spin_lock_bh(&cmd_mgr->lock);
         if ((aml_bus_type != PCIE_MODE) && (cmd->flags & AML_CMD_FLAG_CALL_THREAD)) {
             cmd->flags |= AML_CMD_FLAG_WAIT_PUSH;
             up(&aml_hw->aml_msg_sem);
-
+            spin_unlock_bh(&cmd_mgr->lock);
         } else {
+            spin_unlock_bh(&cmd_mgr->lock);
             aml_ipc_msg_push(aml_hw, cmd, AML_CMD_A2EMSG_LEN(cmd->a2e_msg));
-            kfree(cmd->a2e_msg);
+            spin_lock_bh(&cmd_mgr->lock);
+            if (cmd->a2e_msg) {
+                kfree(cmd->a2e_msg);
+                cmd->a2e_msg = NULL;
+            }
+            spin_unlock_bh(&cmd_mgr->lock);
         }
     }
-
 
     if (!(cmd_flags & AML_CMD_FLAG_NONBLOCK)) {
         #ifdef CONFIG_AML_FHOST
@@ -247,8 +262,12 @@ static int cmd_mgr_queue(struct aml_cmd_mgr *cmd_mgr, struct aml_cmd *cmd)
         if (ret == -ERESTARTSYS) {
            // the completion have break by signal kill, need wait cmd complete
             while (1) {
-                if (cmd->flags & AML_CMD_FLAG_DONE || tout/5 == 0)
+                spin_lock_bh(&cmd_mgr->lock);
+                if (cmd->flags & AML_CMD_FLAG_DONE || tout/5 == 0) {
+                    spin_unlock_bh(&cmd_mgr->lock);
                     break;
+                }
+                spin_unlock_bh(&cmd_mgr->lock);
                 msleep(5);
                 tout = tout -5;
             }
@@ -341,7 +360,10 @@ static int cmd_mgr_llind(struct aml_cmd_mgr *cmd_mgr, struct aml_cmd *cmd)
             if (!defer_push) {
                 next->flags &= ~AML_CMD_FLAG_WAIT_PUSH;
                 aml_ipc_msg_push(aml_hw, next, AML_CMD_A2EMSG_LEN(next->a2e_msg));
-                kfree(next->a2e_msg);
+                if (next->a2e_msg) {
+                    kfree(next->a2e_msg);
+                    next->a2e_msg = NULL;
+                }
             }
         }
     }
@@ -416,7 +438,10 @@ static int cmd_mgr_msgind(struct aml_cmd_mgr *cmd_mgr, struct aml_cmd_e2amsg *ms
             AML_INFO("next len 0x%x, queue sz %d \n", AML_CMD_A2EMSG_LEN(next->a2e_msg), cmd_mgr->queue_sz);
             next->flags &= ~AML_CMD_FLAG_WAIT_PUSH;
             aml_ipc_msg_push(aml_hw, next, AML_CMD_A2EMSG_LEN(next->a2e_msg));
-            kfree(next->a2e_msg);
+            if (next->a2e_msg) {
+                kfree(next->a2e_msg);
+                next->a2e_msg = NULL;
+            }
         }
     }
     aml_spin_unlock(&cmd_mgr->lock);
@@ -461,13 +486,20 @@ static void cmd_mgr_drain(struct aml_cmd_mgr *cmd_mgr)
         list_del(&cur->list);
 
         cmd_mgr->queue_sz--;
-        if (!(cur->flags & AML_CMD_FLAG_NONBLOCK))
-            complete(&cur->complete);
 
         if (cur->flags & AML_CMD_FLAG_WAIT_PUSH) {
             if (cur->a2e_msg)
                 kfree(cur->a2e_msg);
+            cur->a2e_msg = NULL;
+            cur->flags &= ~AML_CMD_FLAG_WAIT_PUSH;
+        }
+
+        if (cur->flags & AML_CMD_FLAG_NONBLOCK) {
             kfree(cur);
+        } else {
+            printk("cmd_mgr_drain cmd_complete\n");
+            complete(&cur->complete);
+            cur->flags &= ~(AML_CMD_FLAG_WAIT_ACK | AML_CMD_FLAG_WAIT_CFM);
         }
     }
     spin_unlock_bh(&cmd_mgr->lock);

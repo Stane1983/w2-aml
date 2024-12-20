@@ -20,6 +20,7 @@
 #include "aml_fw_trace.h"
 #include "aml_mdns_offload.h"
 #include "aml_cfg.h"
+#include <linux/wireless.h>
 
 #define RC_AUTO_RATE_INDEX -1
 #define MAX_CHAR_SIZE 40

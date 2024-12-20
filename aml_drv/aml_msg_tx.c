@@ -408,13 +408,24 @@ static int aml_send_msg(struct aml_hw *aml_hw, const void *msg_params,
 {
     struct lmac_msg *msg;
     struct aml_cmd *cmd;
+    struct mm_other_cmd *other_cmd;
     bool nonblock;
     bool call_thread;
     int ret;
-
-    AML_DBG(AML_FN_ENTRY_STR);
+    uint32_t id;
 
     msg = container_of((void *)msg_params, struct lmac_msg, param);
+    id = msg->id;
+    if (id == MM_OTHER_REQ) {
+        other_cmd = (struct mm_other_cmd *)msg_params;
+        id = other_cmd->mm_sub_index;
+    }
+
+    if (is_mdnsoffload_msg(id))
+        MDNS_OFFLOAD_DEBUG(AML_FN_ENTRY_STR);
+    else
+        AML_DBG(AML_FN_ENTRY_STR);
+
 #ifdef CONFIG_AML_RECOVERY
     if ((aml_bus_type != PCIE_MODE) && (bus_state_detect.bus_err)) {
         kfree(msg);
@@ -486,7 +497,10 @@ static int aml_send_msg(struct aml_hw *aml_hw, const void *msg_params,
         cmd->flags |= AML_CMD_FLAG_REQ_CFM;
     if (call_thread)
         cmd->flags |= AML_CMD_FLAG_CALL_THREAD;
-    ret = aml_hw->cmd_mgr.queue(&aml_hw->cmd_mgr, cmd);
+    if (aml_hw->cmd_mgr.queue)
+        ret = aml_hw->cmd_mgr.queue(&aml_hw->cmd_mgr, cmd);
+    else
+        printk("====> aml_hw->cmd_mgr.queue null xxxxxxx\n");
 
     if (!ret) {
         if (nonblock) {

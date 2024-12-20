@@ -26,7 +26,7 @@ extern int g_mdns_offload_debug;
     do {\
         if (g_mdns_offload_debug)\
             printk(__VA_ARGS__);\
-    } while(0);
+    } while(0)
 
 #define GOOGLE_VENDOR_OUI 0x1A11
 
@@ -188,7 +188,7 @@ static inline char *__mdnsOffload_decode_qname(unsigned char *buf,
     }
     return qname;
 err:
-    printk("mdnsOffload: decode qname failed!\n");
+    MDNS_OFFLOAD_DEBUG("mdnsOffload: decode qname failed!\n");
     kfree(qname);
     return NULL;
 }
@@ -396,20 +396,21 @@ static inline int __mdnsOffload_addProtocolResponses(struct wiphy *wiphy,
     MDNS_OFFLOAD_DEBUG("mdnsOffload: addProtocolResponses: pkt_len:%u\n", pkt_len);
     MDNS_OFFLOAD_DEBUG("mdnsOffload: addProtocolResponses: criteriaListNum:%u\n",
         criteriaListNum);
-    MDNS_OFFLOAD_DEBUG("criteria list:\n");
-    for (i = 0; i < criteriaListNum; i++) {
-        qname = __mdnsOffload_decode_qname(pkt_data, pkt_len,
-            criteriaList[i].nameOffset);
-        MDNS_OFFLOAD_DEBUG("%d. type:%d\tnameOffset:%d\tname:%s\n", i + 1,
-            criteriaList[i].type,
-            criteriaList[i].nameOffset,
-            (qname && strlen(qname) > 0) ? qname : "none");
-        kfree(qname);
-        qname = NULL;
+    if (g_mdns_offload_debug){
+        MDNS_OFFLOAD_DEBUG("criteria list:\n");
+        for (i = 0; i < criteriaListNum; i++) {
+            qname = __mdnsOffload_decode_qname(pkt_data, pkt_len,
+                criteriaList[i].nameOffset);
+            MDNS_OFFLOAD_DEBUG("%d. type:%d\tnameOffset:%d\tname:%s\n", i + 1,
+                criteriaList[i].type,
+                criteriaList[i].nameOffset,
+                (qname && strlen(qname) > 0) ? qname : "none");
+            kfree(qname);
+            qname = NULL;
+        }
+        MDNS_OFFLOAD_DEBUG("rawOffloadPacket:\n");
+            __mdnsOffload_dump_msg(pkt_data, pkt_len);
     }
-    MDNS_OFFLOAD_DEBUG("rawOffloadPacket:\n");
-    if (g_mdns_offload_debug)
-        __mdnsOffload_dump_msg(pkt_data, pkt_len);
     if (mdns_offload_ops.addProtocolResponses) {
         offloadData.rawOffloadPacketLen = pkt_len;
         offloadData.rawOffloadPacket = pkt_data;
@@ -426,9 +427,9 @@ static inline int __mdnsOffload_addProtocolResponses(struct wiphy *wiphy,
         goto exit;
     }
 exit:
-    if (!pkt_data)
+    if (pkt_data)
         kfree(pkt_data);
-    if (!criteriaList)
+    if (criteriaList)
         kfree(criteriaList);
 
     if (err)
