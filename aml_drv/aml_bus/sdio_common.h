@@ -1,6 +1,7 @@
 #ifndef SDIO_COMMON_H
 #define SDIO_COMMON_H
 
+#include <linux/version.h>
 #include <linux/mmc/sdio_func.h>
 #include <linux/mmc/mmc.h>
 #include <linux/mmc/host.h>
@@ -12,7 +13,6 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/skbuff.h>
-#include <linux/version.h>
 #include <linux/init.h>
 #include <linux/device.h>
 #include <linux/errno.h>
@@ -24,7 +24,6 @@
 #include <linux/kernel.h> /* printk() */
 #include <linux/list.h>
 #include <linux/netdevice.h>
-#include <linux/version.h>
 #include <linux/spinlock.h>
 #include <linux/kthread.h>
 #include <linux/gpio.h> //mach

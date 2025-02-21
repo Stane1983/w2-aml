@@ -1423,7 +1423,7 @@ struct mm_mu_group_update_req
         u8_l group_id;
         /// User position
         u8_l user_pos;
-    } groups[0];
+    } groups[];
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -2196,7 +2196,7 @@ struct sm_connect_req
     u16_l ie_len;
     /// Buffer containing the additional information elements to be put in the
     /// association request
-    u32_l ie_buf[0];
+    u32_l ie_buf[];
 };
 
 /// Structure containing the parameters of the @ref SM_CONNECT_CFM message.
@@ -2239,7 +2239,7 @@ struct sm_connect_ind
     /// EDCA parameters
     u32_l ac_param[AC_MAX];
     /// IE buffer
-    u32_l assoc_ie_buf[0];
+    u32_l assoc_ie_buf[];
 };
 
 struct sm_connect_ind_ex
@@ -2313,7 +2313,7 @@ struct sm_ft_auth_ind
     /// Size of the FT elements
     u16_l ft_ie_len;
     /// Fast Transition elements in the authentication
-    u32_l ft_ie_buf[0];
+    u32_l ft_ie_buf[];
 };
 
 ///////////////////////////////////////////////////////////////////////////////

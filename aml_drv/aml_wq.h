@@ -43,7 +43,7 @@ struct aml_wq {
     struct aml_hw *aml_hw;
     enum aml_wq_type id;
     uint8_t len;
-    uint8_t data[0];
+    uint8_t data[];
 };
 
 struct aml_wq *aml_wq_alloc(int len);
