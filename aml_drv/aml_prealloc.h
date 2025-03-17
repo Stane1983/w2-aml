@@ -32,6 +32,8 @@ enum prealloc_buf_type {
     PREALLOC_BUF_TYPE_RX,
     PREALLOC_BUF_TYPE_TXQ,
     PREALLOC_BUF_TYPE_AMSDU,
+    PREALLOC_TRACE_PTR_EXPEND,
+    PREALLOC_TRACE_STR_EXPEND,
     PREALLOC_BUF_TYPE_MAX,
 };
 void *aml_prealloc_get(int buf_type, size_t buf_size, size_t *alloc_size);

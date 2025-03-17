@@ -14,6 +14,9 @@
  * INCLUDE FILES
  ******************************************************************************
  */
+
+#define AML_MODULE      GENERIC
+
 #include <linux/spinlock.h>
 #include "aml_defs.h"
 #include "aml_prof.h"
@@ -23,6 +26,7 @@
 #include "ipc_shared.h"
 #include "aml_msg_rx.h"
 #include "aml_recy.h"
+#include "aml_log.h"
 
 /*
  * TYPES DEFINITION
@@ -245,7 +249,7 @@ static void ipc_sdio_host_msgack_handler(struct ipc_host_env_tag *env)
         AML_INFO("error: a2e msg hostid is null\n");
         return;
     }
-    printk("%s %p\n", __func__, hostid);
+    AML_INFO(" %p\n", hostid);
     env->msga2e_hostid = NULL;
     env->msga2e_cnt++;
     env->cb.recv_msgack_ind(env->pthis, hostid);
@@ -262,7 +266,6 @@ static void ipc_pci_host_msgack_handler(struct ipc_host_env_tag *env)
 {
     void *hostid = env->msga2e_hostid;
 
-    AML_INFO("a2e msg hostid=0x%lx count=%d\n", env->msga2e_hostid, env->msga2e_cnt);
     if (!hostid) {
         struct aml_hw *aml_hw = (struct aml_hw *)env->pthis;
         struct aml_vif *aml_vif = aml_hw->vif_table[0];
@@ -310,10 +313,10 @@ static void ipc_host_dbg_handler(struct ipc_host_env_tag *env)
     }
 }
 
-static void ipc_host_trace_handler(struct ipc_host_env_tag *env)
+static void ipc_host_trace_handler(struct aml_hw *aml_hw)
 {
     if (aml_bus_type != PCIE_MODE) {
-       env->cb.recv_trace_ind(env->pthis, 1);
+       aml_traceind(aml_hw);
     }
 }
 
@@ -560,7 +563,7 @@ int ipc_host_rxbuf_push(struct ipc_host_env_tag *env, struct aml_ipc_buf *buf)
 
 #ifdef DEBUG_CODE
     if (addr_null_happen) {
-        printk("push rxbuf, idx:%d, host_id:0x%x, buf:%08x, addr:%08x, dma_addr:%08x\n",
+        AML_INFO("push rxbuf, idx:%d, host_id:0x%x, buf:%08x, addr:%08x, dma_addr:%08x\n",
                 env->rxbuf_idx, host_rxbuf->hostid, buf, buf->addr, buf->dma_addr);
     }
 
@@ -718,7 +721,7 @@ int ipc_host_msgbuf_push(struct ipc_host_env_tag *env, struct aml_ipc_buf *buf)
     shared_env->msg_e2a_hostbuf_addr[env->msgbuf_idx] = buf->dma_addr;
     env->msgbuf[env->msgbuf_idx] = buf;
     if (shared_env->msg_e2a_hostbuf_addr[env->msgbuf_idx] != buf->dma_addr) {
-        printk("error:msg_e2a_hostbuf_addr=0x%X,dma_addr=0x%x,msgbuf_idx=%d\n",shared_env->msg_e2a_hostbuf_addr[env->msgbuf_idx],buf->dma_addr,env->msgbuf_idx);
+        AML_ERR("error:msg_e2a_hostbuf_addr=0x%X,dma_addr=0x%x,msgbuf_idx=%d\n",shared_env->msg_e2a_hostbuf_addr[env->msgbuf_idx],buf->dma_addr,env->msgbuf_idx);
     }
     record_push_msg_buf(env,buf);
     env->msgbuf_idx = (env->msgbuf_idx + 1) % IPC_MSGE2A_BUF_CNT;
@@ -1033,9 +1036,7 @@ void aml_store_excep_info(struct aml_hw *aml_hw)
     }
 
     AML_INFO("\n%s", fbuf);
-#ifdef CONFIG_AML_DEBUGFS
     aml_send_err_info_to_diag(fbuf, strlen(fbuf));
-#endif
 }
 
 void aml_sdio_usb_extend_irq_handle(struct aml_hw *aml_hw)
@@ -1046,21 +1047,28 @@ void aml_sdio_usb_extend_irq_handle(struct aml_hw *aml_hw)
         case DYNAMIC_BUF_HOST_TX_STOP:
             aml_hw->dynabuf_stop_tx = DYNAMIC_BUF_HOST_TX_STOP;
             aml_hw->send_tx_stop_to_fw = 1;
+            AML_INFO("FW->host tx stop, aml_hw->dynabuf_stop_tx:%d\n", aml_hw->dynabuf_stop_tx);
             up(&aml_hw->aml_tx_sem);
             break;
         case DYNAMIC_BUF_HOST_TX_START:
             aml_hw->dynabuf_stop_tx = 0;
+            AML_INFO("FW->host tx start, aml_hw->dynabuf_stop_tx:%d\n", aml_hw->dynabuf_stop_tx);
             up(&aml_hw->aml_tx_sem);
             break;
-        case DYNAMIC_BUF_LA_SWITCH_FINSH:
-            printk("la page had been released completely!\n");
+        case DYNAMIC_BUF_LA_SWITCH_FINISH:
+            AML_INFO("la page had been released completely!\n");
             break;
-        case DYNAMIC_BUF_TRACE_SWITCH_FINSH:
-            printk("USB TRACE READY!\n");
+        case DYNAMIC_BUF_TRACE_EXPEND_FINISH:
+            AML_INFO("USB TRACE READY!\n");
+            aml_hw->trace_malloc_success = 1;
             break;
+        case DYNAMIC_BUF_TRACE_REDUCE_FINISH:
+            AML_INFO("USB TRACE REDUCE!\n");
+            aml_hw->trace_malloc_success = 0;
+
         case EXCEPTION_IRQ:
             if (aml_bus_type == SDIO_MODE) {
-                printk("firmware exception!\n");
+                AML_ERR("firmware exception!\n");
                 aml_store_excep_info(aml_hw);
             }
             break;
@@ -1072,6 +1080,7 @@ void aml_sdio_usb_extend_irq_handle(struct aml_hw *aml_hw)
 /**
  ******************************************************************************
  */
+extern int update_rxptr;
 void ipc_host_irq(struct ipc_host_env_tag *env, uint32_t status)
 {
     // Acknowledge the pending interrupts
@@ -1081,8 +1090,16 @@ void ipc_host_irq(struct ipc_host_env_tag *env, uint32_t status)
     // Optimized for only one IRQ at a time
     if (status & IPC_IRQ_E2A_RXDESC)
     {
-        // handle the RX descriptor reception
-        ipc_host_rxdesc_handler(env);
+        //sdio&usb resume update rxbuf ptr first
+        if ((aml_bus_type != PCIE_MODE) && (update_rxptr != RXBUF_PTR_UPDATE_NONE))
+        {
+            AML_INFO("buf ptr need update \n");
+        }
+        else
+        {
+            // handle the RX descriptor reception
+            ipc_host_rxdesc_handler(env);
+        }
     }
     if (status & IPC_IRQ_E2A_MSG_ACK)
     {
@@ -1146,7 +1163,7 @@ void ipc_host_irq(struct ipc_host_env_tag *env, uint32_t status)
 
     if (((status & SDIO_IRQ_E2A_TRACE) && (aml_bus_type != PCIE_MODE)))
     {
-        ipc_host_trace_handler(env);
+        ipc_host_trace_handler((struct aml_hw *)env->pthis);
     }
     if ((status & SDIO_USB_EXTEND_E2A_IRQ) && (aml_bus_type != PCIE_MODE))
     {
@@ -1162,10 +1179,27 @@ int ipc_host_msg_push(struct ipc_host_env_tag *env, void *msg_buf, uint16_t len)
     uint8_t *src;
     int i; uint8_t *dst;
     struct aml_hw *aml_hw = (struct aml_hw *)env->pthis;
+    struct aml_cmd *cmd = (struct aml_cmd *)msg_buf;
+    struct lmac_msg *msg = cmd->a2e_msg;
+
+    if (!msg)
+        return -1;
 
     if ((aml_bus_type == PCIE_MODE) && g_pci_shutdown) {
         AML_INFO("pci shutdown");
         return -1;
+    }
+
+    if ((aml_hw->state > WIFI_SUSPEND_STATE_NONE || g_pci_msg_suspend)
+        && ((msg->param_len != 0) && (*(msg->param) != MM_SUB_SET_SUSPEND_REQ))
+        && ((msg->param_len != 0) && (*(msg->param) != MM_SUB_SCANU_CANCEL_REQ && (*(msg->param) != MM_SUB_SHUTDOWN)))
+#ifdef CONFIG_AML_RECOVERY
+        && (!aml_recy_flags_chk(AML_RECY_STATE_ONGOING))
+#endif
+    ) {
+        AML_INFO("driver in suspend, cmd not allow to send, id:%d,aml_hw->state:%d g_pci_msg_suspend:%d\n",
+            msg->id, aml_hw->state, g_pci_msg_suspend);
+        return -EBUSY;
     }
 
     REG_SW_SET_PROFILING(env->pthis, SW_PROF_IPC_MSGPUSH);

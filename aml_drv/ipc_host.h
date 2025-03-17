@@ -68,9 +68,6 @@ struct ipc_host_cb_tag
     /// WLAN driver call-back function: recv_dbg_ind
     uint8_t (*recv_dbg_ind)(void *pthis, void *host_id);
 
-    /// WLAN driver call-back function: recv_trace_ind
-    int (*recv_trace_ind)(void *pthis, int mode);
-
 };
 
 /// Struct used to associate a local pointer with a shared 32bits value
@@ -422,3 +419,5 @@ struct aml_txdesc_trigger {
     u8 tx_pcie_ths;
 };
 #endif // _IPC_HOST_H_
+
+extern unsigned char g_pci_msg_suspend;

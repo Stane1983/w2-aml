@@ -7,10 +7,14 @@
  *
  ******************************************************************************
  */
+
+#define  AML_MODULE    RX
+
 #include <linux/dma-mapping.h>
 #include <linux/ieee80211.h>
 #include <linux/etherdevice.h>
 #include <net/ieee80211_radiotap.h>
+#include <net/ip.h>
 
 #include "aml_recy.h"
 #include "aml_wq.h"
@@ -27,7 +31,6 @@
 #include "sg_common.h"
 #include "wifi_top_addr.h"
 #include "aml_rps.h"
-#include "aml_p2p.h"
 
 struct vendor_radiotap_hdr {
     u8 oui[3];
@@ -35,6 +38,8 @@ struct vendor_radiotap_hdr {
     u16 len;
     u8 data[];
 };
+
+uint32_t rxbuf_null_cnt = 0;
 
 /**
  * aml_rx_get_vif - Return pointer to the destination vif
@@ -199,6 +204,53 @@ void aml_rx_defer_skb(struct aml_hw *aml_hw, struct aml_vif *aml_vif,
     schedule_work(&aml_hw->defer_rx.work);
 }
 
+static u32 aml_rx_ip_signature(struct iphdr *iphdr)
+{
+    struct ipv6hdr *ip6hdr;
+    u32 sign = (u32)ntohs(iphdr->id) << 16;
+    void *hdr = (void *)iphdr + (iphdr->ihl << 2);
+
+    if (iphdr->protocol == IPPROTO_UDP)
+        sign |= ntohs(((struct udphdr *)hdr)->check);
+    else if (iphdr->protocol == IPPROTO_TCP)
+        sign |= ntohs(((struct tcphdr *)hdr)->check);
+
+    return sign;
+}
+
+/* return the first TCP/UDP msdu's IPv4 identification(high 16-bit) and TCP/UDP checksum(low 16-bit) */
+u32 aml_rx_skb_signature(struct sk_buff *skb)
+{
+    struct hw_rxhdr *rxhdr = (struct hw_rxhdr *)(skb->data);
+    int offset = sizeof(*rxhdr);
+
+    while ((offset + sizeof(struct ethhdr)) < skb->len) {
+        struct ethhdr *eth = skb->data + offset;
+        u16 ethertype;
+
+        if (rxhdr->flags_is_amsdu) {
+            u8 *payload = (u8 *)(eth + 1);
+            int len = ntohs(eth->h_proto);
+            unsigned int subframe_len = sizeof(struct ethhdr) + len;
+            u8 padding = (4 - subframe_len) & 0x3;
+
+            if (offset + subframe_len > skb-> len)
+                return 0;   /* sub frame length is invalid */
+
+            ethertype = (payload[6] << 8) | payload[7];
+            if (ethertype == ETH_P_IP && ether_addr_equal(payload, rfc1042_header)) {
+                return aml_rx_ip_signature((struct iphdr *)(payload + 8));
+            }
+            offset += subframe_len + padding;
+        } else if (eth->h_proto == htons(ETH_P_IP)) {
+            return aml_rx_ip_signature((struct iphdr *)(eth + 1));
+        } else {
+            return 0;
+        }
+    }
+    return 0;
+}
+
 /**
  * aml_rx_data_skb - Process one data frame
  *
@@ -256,7 +308,7 @@ static int aml_rx_data_skb(struct aml_hw *aml_hw, struct aml_vif *aml_vif,
                     if (!ipc_buf) {
                         wiphy_err(aml_hw->wiphy, "Invalid hostid 0x%x for A-MSDU subframe\n",
                                   hostid);
-                        continue;
+                        break;
                     }
                     rx_skb = ipc_buf->addr;
                     // Index for amsdu_len is different (+1) than the one for amsdu_hostids
@@ -312,7 +364,6 @@ static int aml_rx_data_skb(struct aml_hw *aml_hw, struct aml_vif *aml_vif,
         if (amsdu) {
                 int count;
 
-                skb_put(skb, le32_to_cpu(rxhdr->hwvect.len));
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
                 ieee80211_amsdu_to_8023s(skb, &list, aml_vif->ndev->dev_addr,
                                  AML_VIF_TYPE(aml_vif), 0, NULL, NULL);
@@ -326,8 +377,7 @@ static int aml_rx_data_skb(struct aml_hw *aml_hw, struct aml_vif *aml_vif,
                 if (count > 0)
                     aml_hw->stats->amsdus_rx[count - 1]++;
             } else {
-                aml_filter_sp_data_frame(skb,aml_vif, SP_STATUS_RX);
-                skb_put(skb, le32_to_cpu(rxhdr->hwvect.len));
+                aml_filter_sp_data_frame(skb, aml_vif, SP_STATUS_RX);
                 aml_hw->stats->amsdus_rx[0]++;
                 __skb_queue_head(&list, skb);
         }
@@ -494,7 +544,7 @@ static void aml_rx_assoc_req(struct aml_hw *aml_hw, struct sk_buff *skb)
 }
 
 /**
- * aml_rx_mgmt - Process one 802.11 management frame
+ * aml_rx_mgmt - Process one 802.11 management/control frame
  *
  * @aml_hw: main driver data
  * @aml_vif: vif to upload the buffer to
@@ -512,16 +562,21 @@ static void aml_rx_mgmt(struct aml_hw *aml_hw, struct aml_vif *aml_vif,
 
     if (aml_bus_type != PCIE_MODE) {
         aml_scan_rx(aml_hw, hw_rxhdr, skb);
+        /* actually BAR is a control frame */
+        if (ieee80211_is_back_req(mgmt->frame_control))
+            aml_reo_bar_process(aml_hw, hw_rxhdr->flags_sta_idx, skb);
     }
 
-    sp_ret = aml_filter_sp_mgmt_frame(aml_vif, mgmt, SP_STATUS_RX, skb->len, NULL);
+    sp_ret = aml_filter_sp_mgmt_frame(aml_vif, mgmt, SP_STATUS_RX, skb->len, NULL, 0);
 
     if (sp_ret & AML_GAS_INIT_RSP_FRAME) {
         aml_tx_cfm_wait_rsp(aml_hw, true, __func__, __LINE__);
     }
 
     if ((sp_ret & AML_GAS_ACTION_FRAME) || (sp_ret & AML_P2P_ACTION_FRAME)) {
+        spin_lock_bh(&aml_hw->scan_req_lock);
         if (aml_hw->scan_request) {
+            spin_unlock_bh(&aml_hw->scan_req_lock);
             enum aml_wq_type type = AML_WQ_CANCEL_SCAN;
             struct aml_wq *aml_wq;
 
@@ -535,6 +590,8 @@ static void aml_rx_mgmt(struct aml_hw *aml_hw, struct aml_vif *aml_vif,
                 memcpy(aml_wq->data, &type, 1);
                 aml_wq_add(aml_hw, aml_wq);
             }
+        } else {
+            spin_unlock_bh(&aml_hw->scan_req_lock);
         }
     }
 
@@ -592,15 +649,7 @@ static void aml_rx_mgmt_any(struct aml_hw *aml_hw, struct sk_buff *skb,
 {
     struct aml_vif *aml_vif;
     int vif_idx = hw_rxhdr->flags_vif_idx;
-    u32 frm_len = le32_to_cpu(hw_rxhdr->hwvect.len);
 
-    if (frm_len > skb_tailroom(skb)) {
-        // frame has been truncated by firmware, skip it
-        wiphy_err(aml_hw->wiphy, "MMPDU truncated, skip it\n");
-        goto end;
-    }
-
-    skb_put(skb, frm_len);
     trace_mgmt_rx(hw_rxhdr->phy_info.phy_prim20_freq, vif_idx,
                   hw_rxhdr->flags_sta_idx, (struct ieee80211_mgmt *)skb->data);
 
@@ -1356,17 +1405,7 @@ static int aml_rx_amsdu_free(struct aml_hw *aml_hw, struct hw_rxhdr *rxhdr)
     return res;
 }
 
-
-/**
- * aml_rxdataind - Process rx buffer
- *
- * @pthis: Pointer to the object attached to the IPC structure
- *         (points to struct aml_hw is this case)
- * @arg: Address of the RX descriptor
- *
- * This function is called for each buffer received by the fw
- *
- */
+#ifdef CONFIG_AML_SDIO_USB_FW_REORDER
 struct list_head reorder_list;
 struct list_head free_rxdata_list;
 
@@ -1379,6 +1418,7 @@ void aml_rxdata_init(void)
     INIT_LIST_HEAD(&free_rxdata_list);
 
     for (i = 0; i < RX_DATA_MAX_CNT; i++) {
+        /* coverity[overwrite_var] */
         rxdata = kmalloc(sizeof(struct rxdata), GFP_ATOMIC);
         if (!rxdata) {
             ASSERT_ERR(0);
@@ -1386,6 +1426,7 @@ void aml_rxdata_init(void)
         }
         list_add_tail(&rxdata->list, &free_rxdata_list);
     }
+    /* coverity[leaked_storage] */
 }
 
 void aml_rxdata_deinit(void)
@@ -1432,6 +1473,7 @@ void aml_put_rxdata_back_to_free_list(struct rxdata *rxdata)
 {
     list_add_tail(&rxdata->list, &free_rxdata_list);
 }
+#endif
 
 uint8_t aml_scan_find_already_saved(struct aml_hw *aml_hw, struct sk_buff *skb)
 {
@@ -1463,12 +1505,13 @@ void aml_scan_clear_scan_res(struct aml_hw *aml_hw)
     }
     spin_unlock_bh(&aml_hw->scan_lock);
 }
-
 void aml_scan_rx(struct aml_hw *aml_hw, struct hw_rxhdr *hw_rxhdr, struct sk_buff *skb)
 {
     struct ieee80211_mgmt *mgmt = (struct ieee80211_mgmt *)skb->data;
 
-    if (aml_hw->scan_request) {
+    spin_lock_bh(&aml_hw->scan_req_lock);
+    if (aml_hw->scan_request || aml_hw->sched_request) {
+        spin_unlock_bh(&aml_hw->scan_req_lock);
         if (ieee80211_is_beacon(mgmt->frame_control) || ieee80211_is_probe_resp(mgmt->frame_control)) {
             struct scan_results *scan_res;
             uint8_t contain = 0;
@@ -1510,192 +1553,166 @@ void aml_scan_rx(struct aml_hw *aml_hw, struct hw_rxhdr *hw_rxhdr, struct sk_buf
             scan_res->scanu_res_ind.payload = (u32_l *)(aml_hw->scanres_payload_buf + aml_hw->scanres_payload_buf_offset);
 
             aml_hw->scanres_payload_buf_offset += le32_to_cpu(hw_rxhdr->hwvect.len);
+            spin_lock_bh(&aml_hw->scan_lock);
+            list_add_tail(&scan_res->list, &aml_hw->scan_res_list);
+            spin_unlock_bh(&aml_hw->scan_lock);
         }
-    }
-
-}
-
-void aml_sdio_get_rxdata(struct aml_hw *p_this, struct drv_stat_desc *arg1, struct drv_rxdesc *arg2)
-{
-    uint32_t func_num = SDIO_FUNC6;
-    struct sdio_func *func = aml_priv_to_func(func_num);
-    uint32_t blk_size = func->cur_blksize;
-
-    struct drv_stat_desc *rx_stat_desc = arg1;
-    struct drv_rxdesc *drv_rxdesc = arg2;
-    struct aml_hw *aml_hw = p_this;
-    struct amlw_hif_scatter_req *scat_req = aml_hw->plat->hif_sdio_ops->hi_get_scatreq(&g_hwif_rx_sdio);
-    uint32_t i = 0, sg_count = 0, upload_len = 0, host_id = 0, buffer_len = 0;
-
-    ASSERT_ERR(scat_req);
-
-    for (i = 0; i < RXDESC_CNT_READ_ONCE; i++) {
-        if (!rx_stat_desc[i].rx_stat_val.status)
-            break;
-
-        if (!(rx_stat_desc[i].rx_stat_val.status & RX_STAT_ALLOC)) {
-            continue;
-        }
-
-        drv_rxdesc[i].msdu_offset = RX_HEADER_TO_PAYLOAD_LEN + (rx_stat_desc[i].rx_stat_val.frame_len & 0xff);
-        buffer_len = drv_rxdesc[i].msdu_offset + (rx_stat_desc[i].rx_stat_val.frame_len >> 8);
-        host_id = rx_stat_desc[i].rx_stat_val.host_id;
-
-        if (host_id + RX_HEADER_OFFSET + buffer_len <= aml_hw->rx_buf_end) {
-            scat_req->scat_list[sg_count].page_num = (host_id + RX_HEADER_OFFSET) % RXBUF_START_ADDR;
-            scat_req->scat_list[sg_count].len = ALIGN(buffer_len, blk_size);
-
-            drv_rxdesc[i].skb = dev_alloc_skb(scat_req->scat_list[sg_count].len);
-            if (!drv_rxdesc[i].skb) {
-                printk("%s, %d: alloc skb fail!", __func__, __LINE__);
-                break;
-            }
-            scat_req->scat_list[sg_count].packet = drv_rxdesc[i].skb->data;
-            scat_req->scat_count++;
-            sg_count++;
-        } else {
-            drv_rxdesc[i].skb = dev_alloc_skb(buffer_len);
-            if (!drv_rxdesc[i].skb) {
-                printk("%s, %d: alloc skb fail!", __func__, __LINE__);
-                break;
-            }
-
-            if (host_id + RX_HOSTID_TO_PAYLOAD_LEN < aml_hw->rx_buf_end) {
-                upload_len = aml_hw->rx_buf_end - host_id - RX_HEADER_OFFSET;
-                aml_hw->plat->hif_sdio_ops->hi_rx_buffer_read(drv_rxdesc[i].skb->data, (uint8_t *)(uint64_t)host_id + RX_HEADER_OFFSET, upload_len, 1);
-
-                if (*(uint32_t *)(drv_rxdesc[i].skb->data + RX_PD_LEN) == (host_id + RX_HOSTID_TO_PAYLOAD_LEN)) {
-                    aml_hw->plat->hif_sdio_ops->hi_rx_buffer_read(drv_rxdesc[i].skb->data + upload_len, (uint8_t *)RXBUF_START_ADDR + RX_PD_LEN, buffer_len - upload_len, 1);
-                } else {
-                    aml_hw->plat->hif_sdio_ops->hi_rx_buffer_read(drv_rxdesc[i].skb->data + RX_HEADER_TO_PAYLOAD_LEN, (uint8_t *)RXBUF_START_ADDR, buffer_len - RX_HEADER_TO_PAYLOAD_LEN, 1);
-                }
-            } else {
-                aml_hw->plat->hif_sdio_ops->hi_rx_buffer_read(drv_rxdesc[i].skb->data, (uint8_t *)(uint64_t)host_id + RX_HEADER_OFFSET, RX_HEADER_TO_PD_LEN, 1);
-                aml_hw->plat->hif_sdio_ops->hi_rx_buffer_read(drv_rxdesc[i].skb->data + RX_HEADER_TO_PD_LEN, (uint8_t *)RXBUF_START_ADDR, buffer_len - RX_HEADER_TO_PD_LEN, 1);
-            }
-        }
-    }
-
-    if (sg_count)
-        aml_hw->plat->hif_sdio_ops->hi_recv_frame(scat_req);
-
-}
-
-s8 rx_skb_handle(struct rx_desc_head *desc_stat, struct aml_hw *aml_hw, struct rxdata *rxdata_clear, uint8_t *rxbuf_end)
-{
-    struct rxdata *rxdata = NULL;
-    uint8_t eth_hdr_offset = 0;
-    struct sk_buff *skb = NULL;
-    struct aml_vif *aml_vif;
-    uint32_t upload_len = 0;
-    struct hw_rxhdr *hw_rxhdr = NULL;
-
-    eth_hdr_offset = desc_stat->frame_len & 0xff;
-    desc_stat->frame_len >>= 8;
-
-    /* Check if we need to delete the buffer */
-    if (rxdata_clear && (desc_stat->status & RX_STAT_DELETE)) {
-        list_del(&rxdata_clear->list);
-        dev_kfree_skb(rxdata_clear->skb);
-        aml_put_rxdata_back_to_free_list(rxdata_clear);
-        return 0;
-    }
-
-    if (rxdata_clear && (desc_stat->status == RX_STAT_FORWARD)) {
-        list_del(&rxdata_clear->list);
-        desc_stat->frame_len = rxdata_clear->frame_len;
-        skb = rxdata_clear->skb;
-        desc_stat->hostid = rxdata_clear->host_id;
-        aml_put_rxdata_back_to_free_list(rxdata_clear);
-
-        hw_rxhdr = (struct hw_rxhdr *)(skb->data);
-        skb_pull(skb, sizeof(struct hw_rxhdr));
-        goto forward_handle;
-
     } else {
-        skb = dev_alloc_skb(desc_stat->frame_len + sizeof(struct hw_rxhdr));
-        if (skb == NULL) {
-            printk("%s,%d, skb == NULL, alloc len(0x%x) failed\n", __func__, __LINE__, desc_stat->frame_len + sizeof(struct hw_rxhdr));
-            return -ENOMEM;
-        }
-        skb_reserve(skb, sizeof(struct hw_rxhdr));
+        spin_unlock_bh(&aml_hw->scan_req_lock);
+    }
+}
 
-        if ((aml_hw->host_buf_start < rxbuf_end) && (aml_hw->host_buf_start + RX_DESC_SIZE > rxbuf_end)) {
-            hw_rxhdr = (struct hw_rxhdr *)(rxbuf_end + RX_HEADER_OFFSET);
+#define RXBUF_ENOUGH_FOR(_size, _pos, _end)     ((_pos) + (_size) <= (_end))
 
-        } else {
-            hw_rxhdr = (struct hw_rxhdr *)(aml_hw->host_buf_start + RX_HEADER_OFFSET);
-        }
-
-        //printk("buf_start:%08x, eth_hdr_offset:%08x, desc_stat->frame_len:%08x, size:%08x\n",
-        //    aml_hw->host_buf_start, eth_hdr_offset, desc_stat->frame_len, rxbuf_end - aml_hw->host_buf_start);
-
-        /*
-        not loop: all data in buffer in sequence
-        loop:
-        1. rxdesc/rpd/offset/payload in buffer start.
-        2. only rxdesc in buffer end, rpd and eth offset, payload in buffer start.
-        3. rxdesc, rpd in buffer end, then rpd in buffer start?, offset, payload in buffer start
-        4. rxdesc, rpd, part of offset in buffer end, then rpd in buffer start, part of offset, payload in buffer start
-        5. rxdesc, rpd, offset, part of payload in buffer end, then rpd in buffer start, payload in buffer start
-        */
-
-        if ((aml_hw->host_buf_start < rxbuf_end) && (aml_hw->host_buf_start + RX_PAYLOAD_OFFSET + eth_hdr_offset + desc_stat->frame_len > rxbuf_end)) {//loop
-            if (aml_hw->host_buf_start + RX_DESC_SIZE <= rxbuf_end) {
-                if (aml_hw->host_buf_start + RX_PAYLOAD_OFFSET <= rxbuf_end) {
-#ifndef CONFIG_AML_RX_MINISIZE
-                    if (hw_rxhdr->flags_is_80211_mpdu) {
-                        if (aml_hw->host_buf_start + RX_PAYLOAD_OFFSET + desc_stat->frame_len <= rxbuf_end) {
-                            memcpy((unsigned char *)skb->data, aml_hw->host_buf_start + RX_PAYLOAD_OFFSET + eth_hdr_offset, desc_stat->frame_len);
-                        } else {
-                            memcpy((unsigned char *)skb->data, rxbuf_end + eth_hdr_offset, desc_stat->frame_len);
-                        }
-                    } else
+static inline uint32_t aml_rx_desc_get_next(struct rxdesc *rxdesc)
+{
+#ifdef CONFIG_AML_W2L_RX_MINISIZE
+    return rxdesc->dma_hdrdesc.hd.new_read;
+#elif defined(CONFIG_AML_W2_RX_MINISIZE)    /* W2 compressed RX descriptor */
+#error "W2_RX_MINISIZE is unsupported!"
+#else
+    return rxdesc->new_read;
 #endif
-                    {
-                        if (aml_hw->host_buf_start + RX_PAYLOAD_OFFSET + UNWRAP_SIZE <= rxbuf_end) {//5
-                            upload_len = rxbuf_end - aml_hw->host_buf_start - RX_PAYLOAD_OFFSET - eth_hdr_offset;
-                            memcpy((unsigned char *)skb->data, aml_hw->host_buf_start + RX_PAYLOAD_OFFSET + eth_hdr_offset, upload_len);
-                            memcpy((unsigned char *)skb->data + upload_len, rxbuf_end + RX_PD_LEN, desc_stat->frame_len - upload_len);
-                        } else {//4
-                            memcpy((unsigned char *)skb->data, rxbuf_end + eth_hdr_offset, desc_stat->frame_len);
-                        }
-                    }
-                } else {//2,3
-                    memcpy((unsigned char *)skb->data, rxbuf_end + RX_PD_LEN + eth_hdr_offset, desc_stat->frame_len);
-                }
+}
 
-            } else {//  1
-                memcpy((unsigned char *)skb->data, rxbuf_end + RX_PAYLOAD_OFFSET + eth_hdr_offset, desc_stat->frame_len);
-            }
+static inline int aml_sdio_usb_rx_desc_goto_next(struct rxbuf_list *rxbuf)
+{
+    u32 next_fw_pos = aml_rx_desc_get_next((struct rxdesc *)rxbuf->pos);
 
-        } else {//  not loop
-            memcpy((unsigned char *)skb->data, aml_hw->host_buf_start + RX_PAYLOAD_OFFSET + eth_hdr_offset, desc_stat->frame_len);
-        }
+    /* next_fw_pos is rxdesc new_read addr, which is a sharemem rxdesc addr */
+    if (next_fw_pos > rxbuf->rx_buf_end || next_fw_pos < RXBUF_START_ADDR) {
+        pr_err("=======error:invalid address %08x, start:%08x, end:%08x, fw_pre_pos: %x, fw_new_pos: %x, fw_pos: %x\n",
+            next_fw_pos, rxbuf->pos, rxbuf->end, rxbuf->rxbuf_data_start, rxbuf->rxbuf_data_end, rxbuf->fw_pos);
+        rxbuf->pos = rxbuf->end;    /* drop the whole rxbuf */
+        return -1;
     }
 
-    if (desc_stat->status == RX_STAT_ALLOC && desc_stat->package_info != 0) {
-        rxdata = aml_get_rxdata_from_free_list();
-        if (rxdata) {
-            rxdata->host_id = desc_stat->hostid;
-            rxdata->frame_len = desc_stat->frame_len;
-            rxdata->skb = skb;
-            rxdata->package_info = desc_stat->package_info;
+    if (!RXBUF_ENOUGH_FOR(RX_DESC_SIZE, next_fw_pos, rxbuf->rx_buf_end))
+        next_fw_pos = RXBUF_START_ADDR;
 
-            skb_push(skb, sizeof(struct hw_rxhdr));
-            memcpy((unsigned char *)skb->data, hw_rxhdr, sizeof(struct hw_rxhdr));
-            list_add_tail(&rxdata->list, &reorder_list);
-        }  else {
-            dev_kfree_skb(skb);
-        }
+    /* move to next */
+    if (next_fw_pos > rxbuf->fw_pos)
+        rxbuf->pos += next_fw_pos - rxbuf->fw_pos;
+    else
+        rxbuf->pos = rxbuf->gap + (next_fw_pos - RXBUF_START_ADDR);
+
+    rxbuf->fw_pos = next_fw_pos;
+
+    return 0;
+}
+
+/* get a frame (a mpdu(management), a msdu or an a-msdu) from rx buffer */
+static inline struct sk_buff *aml_sdio_usb_rx_skb_from_rxbuf(struct aml_hw *aml_hw,
+                                                             struct rxbuf_list *rxbuf)
+{
+    struct rx_hd *hd = &((struct rxdesc *)rxbuf->pos)->dma_hdrdesc.hd;
+    struct hw_rxhdr *hw_rxhdr = (struct hw_rxhdr *)&hd->frmlen;
+    u32 frame_len = hd->frmlen;
+    u8 payl_offset = hd->payl_offset;
+    u8 *pos = rxbuf->pos + RX_DESC_SIZE;
+    int room = rxbuf->gap - pos;
+    u32 payl_len2 = 0;
+    struct sk_buff *skb;
+    u8 *data;
+
+    /* it's guaranteed by caller, never happen */
+    BUG_ON(rxbuf->pos < rxbuf->gap && pos > rxbuf->gap);
+
+    if (aml_sdio_usb_rx_desc_goto_next(rxbuf) < 0)
+        return NULL;
+
+    /* firmware resets rx_status, indicates to drop it. refer to rxl_mpdu_free() */
+    if (hd->status == 0)
+        return NULL;
+
+    skb = dev_alloc_skb(sizeof(struct hw_rxhdr) + frame_len);
+    if (!skb) {
+        AML_INFO("failed to alloc skb! frame len: 0x%x\n", frame_len);
+        return NULL;
+    }
+
+    /* put h/w RX header */
+    data = skb_put(skb, sizeof(struct hw_rxhdr));
+    memcpy(data, hw_rxhdr, sizeof(struct hw_rxhdr));
+
+#if 0
+    /* WAR: reset the fields overlapped with payload (44 bytes) */
+#define OVERLAP_LEN ((int)(RX_HEADER_OFFSET + sizeof(struct hw_rxhdr) - RX_DESC_SIZE))
+    if (OVERLAP_LEN > 0)
+        memset(data + sizeof(struct hw_rxhdr) - OVERLAP_LEN, 0, OVERLAP_LEN);
+#endif
+
+    if (room <= 0 || room >= RX_PD_LEN + payl_offset + frame_len) {
+        /* pos: rx_payloaddesc + payl_offset + payload */
+        pos += RX_PD_LEN + payl_offset;
+    } else if (room < RX_PD_LEN) {
+        /* gap: rx_payloaddesc + payl_offset + payload */
+        pos = rxbuf->gap + RX_PD_LEN + payl_offset;
+    } else if (
+#ifndef CONFIG_AML_W2L_RX_MINISIZE
+            hw_rxhdr->flags_is_80211_mpdu ||
+#endif
+            room < RX_PD_LEN + UNWRAP_SIZE) {
+        /*
+         * pos: rx_payloaddesc
+         * gap: payl_offset + payload
+         */
+        pos = rxbuf->gap + payl_offset;
+    } else {
+        /*
+         * pos: rx_payloaddesc1 + payl_offset + payload1
+         * gap: rx_payloaddesc2 + payload2
+         */
+        pos += RX_PD_LEN + payl_offset;
+        payl_len2 = RX_PD_LEN + payl_offset + frame_len - room;
+        frame_len -= payl_len2;
+    }
+
+    /* put payload */
+    data = skb_put(skb, frame_len + payl_len2);
+    memcpy(data, pos, frame_len);
+    if (payl_len2)
+        memcpy(data + frame_len, rxbuf->gap + RX_PD_LEN, payl_len2);
+
+    /* copy external info if exists */
+    if (payl_offset >= sizeof(struct aml_rhd_ext)) {
+        struct aml_rhd_ext *ext = (struct aml_rhd_ext *)(pos - payl_offset);
+
+        *AML_RHD_EXT(skb->data) = *ext;
+    } else {
+        *AML_RHD_EXT(skb->data) = (struct aml_rhd_ext){};
+    }
+
+    return skb;
+}
+
+static s8 aml_sdio_usb_rx_skb_handle(struct aml_hw *aml_hw,
+                                     struct sk_buff *skb,
+                                     enum rx_status_bits rx_status)
+{
+    struct hw_rxhdr *hw_rxhdr = (struct hw_rxhdr *)(skb->data);
+    struct aml_vif *aml_vif;
+
+    skb_pull(skb, sizeof(struct hw_rxhdr));
+
+#ifndef CONFIG_AML_SDIO_USB_FW_REORDER
+    if (rx_status == RX_STAT_ALLOC) {
+        AML_INFO("SDIO/USB firmware reorder is enabled, but driver doesn't support!");
+        dev_kfree_skb(skb);
+        return 0;
+    }
+#endif
+
+    if (!(rx_status & (RX_STAT_FORWARD | RX_STAT_SPURIOUS))) {
+        AML_INFO("invalid rx status %x [%d]: %32ph\n", rx_status, skb->len, skb->data);
+        dev_kfree_skb(skb);
         return 0;
     }
 
-forward_handle:
     spin_lock_bh(&aml_hw->rx_lock);
 
     /* Check if we need to forward the buffer coming from a monitor interface */
-    if (desc_stat->status & RX_STAT_MONITOR) {
+    if (rx_status & RX_STAT_MONITOR) {
         struct sk_buff *skb_monitor;
         struct hw_rxhdr hw_rxhdr_copy;
         u8 rtap_len;
@@ -1711,13 +1728,7 @@ forward_handle:
         aml_rx_vector_convert(aml_hw->machw_type, &hw_rxhdr->hwvect.rx_vect1, &hw_rxhdr->hwvect.rx_vect2);
         rtap_len = aml_rx_rtap_hdrlen(&hw_rxhdr->hwvect.rx_vect1, false);
 
-        //Save frame length
-        frm_len = le32_to_cpu(hw_rxhdr->hwvect.len);
-
-        // Reserve space for frame
-        skb->len = frm_len;
-
-        if (desc_stat->status == RX_STAT_MONITOR) {
+        if (rx_status == RX_STAT_MONITOR) {
         //aml_ipc_buf_e2a_release(aml_hw, ipc_buf);
 
         //Check if there is enough space to add the radiotap header
@@ -1763,7 +1774,7 @@ forward_handle:
             skb_monitor = skb_copy_expand(skb, rtap_len, 0, GFP_ATOMIC);
         }
         #else
-        wiphy_err(aml_hw->wiphy, "RX status %d is invalid when MON_DATA is disabled\n", desc_stat->status);
+        wiphy_err(aml_hw->wiphy, "RX status %d is invalid when MON_DATA is disabled\n", rx_status);
         goto check_len_update;
         #endif
     }
@@ -1773,7 +1784,7 @@ forward_handle:
         if (skb_monitor != NULL) {
         skb_reset_tail_pointer(skb_monitor);
         skb_monitor->len = 0;
-        //printk("%s  %d skb tail %x \n",__func__,__LINE__,skb->tail);
+        //AML_INFO(" skb tail %x \n",skb->tail);
         skb_put(skb_monitor, frm_len);
 #if 0  //TODO: SDIO not use ?
 
@@ -1782,8 +1793,8 @@ forward_handle:
             dev_kfree_skb(skb_monitor);
 #endif
         }
-        if (desc_stat->status == RX_STAT_MONITOR) {
-            desc_stat->status |= RX_STAT_ALLOC;
+        if (rx_status == RX_STAT_MONITOR) {
+            rx_status |= RX_STAT_ALLOC;
             if (skb_monitor != skb) {
                 dev_kfree_skb(skb);
             }
@@ -1792,13 +1803,11 @@ forward_handle:
 
 check_len_update:
     /* Check if we need to update the length */
-    if (desc_stat->status & RX_STAT_LEN_UPDATE) {
-        hw_rxhdr->hwvect.len = desc_stat->frame_len;
-
-        if (desc_stat->status & RX_STAT_ETH_LEN_UPDATE) {
+    if (rx_status & RX_STAT_LEN_UPDATE) {
+        if (rx_status & RX_STAT_ETH_LEN_UPDATE) {
             /* Update Length Field inside the Ethernet Header */
             struct ethhdr *hdr = (struct ethhdr *)(skb->data);
-            hdr->h_proto = htons(desc_stat->frame_len - sizeof(struct ethhdr));
+            hdr->h_proto = htons(hw_rxhdr->hwvect.len - sizeof(struct ethhdr));
         }
 
         dev_kfree_skb(skb);
@@ -1807,7 +1816,7 @@ check_len_update:
     }
 
     /* Check if it must be discarded after informing upper layer */
-    if (desc_stat->status & RX_STAT_SPURIOUS) {
+    if (rx_status & RX_STAT_SPURIOUS) {
         struct ieee80211_hdr *hdr;
         /* Read mac header to obtain Transmitter Address */
         //aml_ipc_buf_e2a_sync(aml_hw, ipc_buf, sync_len);
@@ -1823,13 +1832,11 @@ check_len_update:
     }
 
     /* Check if we need to forward the buffer */
-    if (desc_stat->status & RX_STAT_FORWARD) {
+    if (rx_status & RX_STAT_FORWARD) {
         struct aml_sta *sta = NULL;
         aml_rx_vector_convert(aml_hw->machw_type, &hw_rxhdr->hwvect.rx_vect1, &hw_rxhdr->hwvect.rx_vect2);
-        hw_rxhdr->hwvect.len = desc_stat->frame_len;
 
-        if (hw_rxhdr->flags_sta_idx != AML_INVALID_STA &&
-            hw_rxhdr->flags_sta_idx < (NX_REMOTE_STA_MAX + NX_VIRT_DEV_MAX)) {
+        if (hw_rxhdr->flags_sta_idx < (NX_REMOTE_STA_MAX + NX_VIRT_DEV_MAX)) {
             sta = aml_hw->sta_table + hw_rxhdr->flags_sta_idx;
             /* coverity[remediation] -	hwvect won't cross the line*/
             aml_rx_statistic(aml_hw, hw_rxhdr, sta);
@@ -1872,32 +1879,13 @@ check_len_update:
     return 0;
 }
 
-void aml_rx_datarate_monitor(struct rx_desc_head *desc_stat)
+void aml_reo_forward(struct aml_hw *aml_hw, struct sk_buff_head *frames)
 {
-    static unsigned char start_flag = 0;
-    static unsigned long in_time;
-    static unsigned long rx_payload_total = 0;
-    static unsigned int vm_tx_speed = 0;
-    int frame_len = 0;
-    uint8_t eth_hdr_offset = 0;
+    struct sk_buff *skb;
 
-    eth_hdr_offset = desc_stat->frame_len & 0xff;
-    frame_len = desc_stat->frame_len >> 8;
-
-    if (!start_flag) {
-        start_flag = 1;
-        in_time = jiffies;
+    while ((skb = __skb_dequeue(frames))) {
+        aml_sdio_usb_rx_skb_handle(aml_hw, skb, RX_STAT_FORWARD);
     }
-
-    rx_payload_total += frame_len;
-
-    if (time_after(jiffies, in_time + HZ)) {
-        vm_tx_speed = rx_payload_total >> 17;
-        start_flag = 0;
-        rx_payload_total = 0;
-    }
-    printk("rx-speed----------------%d \n",vm_tx_speed);
-
 }
 
 void aml_dynamic_update_tx_page(struct aml_hw *aml_hw)
@@ -1929,7 +1917,7 @@ void aml_dynamic_update_tx_page(struct aml_hw *aml_hw)
 extern uint8_t rx_need_update;
 extern struct crg_msc_cbw *g_cmd_buf;
 
-void aml_trigger_rst_rxd(struct aml_hw *aml_hw, uint32_t addr_rst)
+static void aml_trigger_rst_rxd(struct aml_hw *aml_hw, uint32_t addr_rst, uint32_t recv_pkt_len)
 {
     uint32_t cmd_buf[2] = {0};
     static uint32_t last_addr = 0;
@@ -1953,7 +1941,7 @@ void aml_trigger_rst_rxd(struct aml_hw *aml_hw, uint32_t addr_rst)
     }
 
     if (aml_hw->rx_buf_state & BUFFER_REDUCE_FINSH) {
-        /* Host rx reduce had finshed, notify the firmware */
+        /* Host rx reduce had finished, notify the firmware */
         addr_rst |= HOST_RXBUF_REDUCE_FINSH;
         AML_INFO("reduce finsh last_addr = %x, addr_rst = %x", last_addr, addr_rst);
         aml_hw->rx_buf_state &= ~BUFFER_REDUCE_FINSH;
@@ -1967,7 +1955,7 @@ void aml_trigger_rst_rxd(struct aml_hw *aml_hw, uint32_t addr_rst)
     }
 
     if (aml_hw->rx_buf_state & BUFFER_EXPEND_FINSH) {
-        /* Host rx expend had finshed, notify the firmware */
+        /* Host rx expend had finished, notify the firmware */
         addr_rst |= HOST_RXBUF_ENLARGE_FINSH;
         AML_INFO("expend finsh last_addr = %x, addr_rst = %x", last_addr, addr_rst);
         aml_hw->rx_buf_state &= ~BUFFER_EXPEND_FINSH;
@@ -1982,7 +1970,8 @@ void aml_trigger_rst_rxd(struct aml_hw *aml_hw, uint32_t addr_rst)
             if (!(aml_hw->rx_buf_state & BUFFER_STATUS) && !(addr_rst & (0x1e000000)) &&
                 (aml_hw->rx_buf_state & FW_BUFFER_NARROW) &&
                 (rx_need_update < 2) &&
-                (aml_hw->recv_pkt_len < aml_hw->rx_buf_len / 4)) { // tx buf 256K
+                recv_pkt_len < ((aml_hw->rx_buf_end - RXBUF_START_ADDR) / 4)) { // tx buf 256K
+                /* RX read pointer (addr_rst) is embedded in TX CMD, later send it to firmware. */
                 g_cmd_buf->resv[USB_TXCMD_CARRY_RXRD_START_INDEX]     = UPDATE_FLAG & 0xff;
                 g_cmd_buf->resv[USB_TXCMD_CARRY_RXRD_START_INDEX + 1] = (UPDATE_FLAG >> 8) & 0xff;
                 g_cmd_buf->resv[USB_TXCMD_CARRY_RXRD_START_INDEX + 2] = (UPDATE_FLAG >> 16) & 0xff;
@@ -2002,70 +1991,58 @@ void aml_trigger_rst_rxd(struct aml_hw *aml_hw, uint32_t addr_rst)
     }
 }
 
-void aml_sdio_dynamic_buffer_check(struct aml_hw *aml_hw, struct rxbuf_list *rxbuf_list)
+static void aml_sdio_usb_dynamic_buffer_check(struct aml_hw *aml_hw)
 {
     if (aml_hw->rx_buf_state & BUFFER_STATUS) {
         if (aml_hw->rx_buf_state & BUFFER_NARROW) {
-            printk("%s,%d:reduce fw_new_pos=%x, fw_buf_pos=%x\n", __func__, __LINE__,
+            AML_INFO("reduce fw_new_pos=%x, fw_buf_pos=%x\n",
                        (aml_hw->fw_new_pos & ~AML_WRAP), (aml_hw->fw_buf_pos & ~AML_WRAP));
 
             if ((aml_hw->rx_buf_state & BUFFER_UPDATE_FLAG) == 0) {
                 aml_hw->rx_buf_state |= BUFFER_UPDATE_FLAG;
-                rxbuf_list->rx_buf_end = aml_hw->rx_buf_end;
-                rxbuf_list->rx_buf_len = aml_hw->rx_buf_len;
                 return;
             }
             if (aml_bus_type == SDIO_MODE) {
                 aml_hw->rx_buf_end = RXBUF_END_ADDR_SMALL;
-                aml_hw->rx_buf_len = RX_BUFFER_LEN_SMALL;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0) // template solution for S905L3A
                 aml_rps_switch_check(aml_hw, RPS_ON);
 #endif
             } else {
                 aml_hw->rx_buf_end = USB_RXBUF_END_ADDR_SMALL;
-                aml_hw->rx_buf_len = USB_RX_BUFFER_LEN_SMALL;
             }
             aml_hw->rx_buf_state &= ~(BUFFER_STATUS);
             aml_hw->rx_buf_state &= ~(BUFFER_UPDATE_FLAG);
             aml_hw->rx_buf_state |= BUFFER_REDUCE_FINSH;
-            printk("%s,%d:reduce_finsh rx_buf_state = %x\n", __func__, __LINE__, aml_hw->rx_buf_state);
+            AML_INFO("reduce_finish rx_buf_state = %x\n", aml_hw->rx_buf_state);
         } else if (aml_hw->rx_buf_state & BUFFER_EXPAND) {
-            printk("%s,%d:expend fw_new_pos=%x, fw_buf_pos=%x\n", __func__, __LINE__,
+            AML_INFO("expend fw_new_pos=%x, fw_buf_pos=%x\n",
                 (aml_hw->fw_new_pos & ~AML_WRAP), (aml_hw->fw_buf_pos & ~AML_WRAP));
             if ((aml_hw->rx_buf_state & BUFFER_UPDATE_FLAG) == 0) {
                 aml_hw->rx_buf_state |= BUFFER_UPDATE_FLAG;
-                rxbuf_list->rx_buf_end = aml_hw->rx_buf_end;
-                rxbuf_list->rx_buf_len = aml_hw->rx_buf_len;
                 return;
             }
 
             if (aml_bus_type == SDIO_MODE) {
                 aml_hw->rx_buf_end = (aml_hw->la_enable) ? RXBUF_END_ADDR_LA_LARGE : RXBUF_END_ADDR_LARGE;
-                aml_hw->rx_buf_len = (aml_hw->la_enable) ? RX_BUFFER_LEN_LA_LARGE : RX_BUFFER_LEN_LARGE;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0) // template solution for S905L3A
                 aml_rps_switch_check(aml_hw, RPS_OFF);
 #endif
             } else{
                 if (aml_hw->la_enable) {
                     aml_hw->rx_buf_end = USB_RXBUF_END_ADDR_LA_LARGE;
-                    aml_hw->rx_buf_len = USB_RX_BUFFER_LEN_LA_LARGE;
                 } else if (aml_hw->trace_enable) {
                     aml_hw->rx_buf_end = USB_RXBUF_END_ADDR_TRACE_LARGE;
-                    aml_hw->rx_buf_len = USB_RX_BUFFER_LEN_TRACE_LARGE;
                 } else {
                     aml_hw->rx_buf_end = USB_RXBUF_END_ADDR_LARGE;
-                    aml_hw->rx_buf_len = USB_RX_BUFFER_LEN_LARGE;
                 }
             }
 
             aml_hw->rx_buf_state &= ~(BUFFER_STATUS);
             aml_hw->rx_buf_state &= ~(BUFFER_UPDATE_FLAG);
             aml_hw->rx_buf_state |= BUFFER_EXPEND_FINSH;
-            printk("%s,%d:enlarge_finsh rx_buf_state = %x\n", __func__, __LINE__, aml_hw->rx_buf_state);
+            AML_INFO("enlarge_finish rx_buf_state = %x\n", aml_hw->rx_buf_state);
         }
     }
-    rxbuf_list->rx_buf_end = aml_hw->rx_buf_end;
-    rxbuf_list->rx_buf_len = aml_hw->rx_buf_len;
 }
 
 void aml_rxbuf_list_init(struct aml_hw *aml_hw)
@@ -2080,7 +2057,7 @@ void aml_rxbuf_list_init(struct aml_hw *aml_hw)
         aml_hw->rxbuf_list[i].rxbuf = (u8 *)aml_hw->rxbufs + i * RXBUF_SIZE;
         list_add_tail(&aml_hw->rxbuf_list[i].list, &aml_hw->rxbuf_free_list);
      }
-    printk("%s host_buf:%08x\n", __func__, aml_hw->rxbufs);
+    AML_INFO("host_buf:%08x\n", aml_hw->rxbufs);
 }
 
 struct rxbuf_list *aml_get_rxbuf_list_from_used_list(struct aml_hw *aml_hw)
@@ -2097,7 +2074,7 @@ struct rxbuf_list *aml_get_rxbuf_list_from_used_list(struct aml_hw *aml_hw)
     return rxbuf_list;
 }
 
-struct rxbuf_list *aml_get_rxbuf_list_from_free_list(struct aml_hw *aml_hw)
+static struct rxbuf_list *aml_get_rxbuf_list_from_free_list(struct aml_hw *aml_hw)
 {
     struct rxbuf_list *rxbuf_list = NULL;
 
@@ -2111,14 +2088,33 @@ struct rxbuf_list *aml_get_rxbuf_list_from_free_list(struct aml_hw *aml_hw)
     return rxbuf_list;
 }
 
-s8 aml_sdio_rxdataind(void *pthis, void *arg)
+
+static inline void aml_stats_rx_trans_update(struct aml_stats *stats, unsigned int len)
 {
-    struct aml_hw *aml_hw = pthis;
-    u8 result = -1;
-    uint32_t need_len = 0;
+    int i;
+
+    ++stats->rx_trans_total;
+    for (i = 0; i < AML_RX_TRANS_RANK_NUM - 1; i++) {
+        if (len >= (AML_RX_TRANS_RANK_SIZE_0 >> i)) {
+            ++stats->rx_trans[i];
+            return;
+        }
+    }
+    ++stats->rx_trans[i];
+}
+
+static inline void hi_rx_buffer_read(struct aml_hw *aml_hw, u8 *buf, u32 addr, unsigned int len)
+{
+    if (aml_bus_type == SDIO_MODE)
+        aml_hw->plat->hif_sdio_ops->hi_rx_buffer_read(buf, (unsigned char *)addr, len, 0);
+    else
+        aml_hw->plat->hif_ops->hi_rx_buffer_read(buf, (unsigned char *)addr, len, USB_EP4);
+}
+
+static s8 aml_sdio_usb_rxdataind(struct aml_hw *aml_hw)
+{
     uint32_t fw_buf_pos = aml_hw->fw_buf_pos & ~AML_WRAP;
     uint32_t fw_new_pos = aml_hw->fw_new_pos & ~AML_WRAP;
-    struct rxbuf_list *temp_list = NULL;
 
     REG_SW_SET_PROFILING(aml_hw, SW_PROF_AMLDATAIND);
 
@@ -2126,134 +2122,129 @@ s8 aml_sdio_rxdataind(void *pthis, void *arg)
         if (aml_hw->rx_buf_state & BUFFER_STATUS) {
             usleep_range(2, 3);
         } else {
-            return result;
+            return -1;
         }
     }
 
     if (aml_hw->fw_buf_pos != aml_hw->fw_new_pos) {
-        temp_list = aml_get_rxbuf_list_from_free_list(aml_hw);
-        if (temp_list) {
-            aml_sdio_dynamic_buffer_check(aml_hw, temp_list);
-            need_len = CIRCLE_Subtract(fw_new_pos, fw_buf_pos, temp_list->rx_buf_len);
-            temp_list->rxbuf_data_start = fw_buf_pos;
-            temp_list->rxbuf_data_end = fw_new_pos;
-            if (aml_bus_type == SDIO_MODE) {
-                if (fw_new_pos > fw_buf_pos) {
-                    aml_hw->plat->hif_sdio_ops->hi_rx_buffer_read((unsigned char *)temp_list->rxbuf,
-                        (unsigned char *)(unsigned long)fw_buf_pos, need_len, 0);
+        struct rxbuf_list *rxbuf = aml_get_rxbuf_list_from_free_list(aml_hw);
 
-                    temp_list->first_len = need_len;
-                    temp_list->second_len = 0;
-                } else {
-                    if (temp_list->rx_buf_end - fw_buf_pos < RX_DESC_SIZE) {
-                        if (fw_new_pos > RXBUF_START_ADDR) {
-                            aml_hw->plat->hif_sdio_ops->hi_rx_buffer_read((unsigned char *)temp_list->rxbuf,
-                                (unsigned char *)(unsigned long)RXBUF_START_ADDR, fw_new_pos - RXBUF_START_ADDR, 0);
-                            temp_list->rxbuf_data_start = RXBUF_START_ADDR;
-                        }
-                        temp_list->first_len = 0;
-                        temp_list->second_len = fw_new_pos - RXBUF_START_ADDR;
-                    } else {
-                        aml_hw->plat->hif_sdio_ops->hi_rx_buffer_read((unsigned char *)temp_list->rxbuf,
-                            (unsigned char *)(unsigned long)fw_buf_pos, temp_list->rx_buf_end - fw_buf_pos, 0);
+        if (rxbuf) {
+            uint32_t first_len;
+            uint32_t second_len;
+            uint32_t recv_pkt_len;
 
-                        if (fw_new_pos > RXBUF_START_ADDR)
-                            aml_hw->plat->hif_sdio_ops->hi_rx_buffer_read((unsigned char *)temp_list->rxbuf + (temp_list->rx_buf_end - fw_buf_pos),
-                                (unsigned char *)(unsigned long)RXBUF_START_ADDR, fw_new_pos - RXBUF_START_ADDR, 0);
+            /* host rxbuf dynamic switch */
+            aml_sdio_usb_dynamic_buffer_check(aml_hw);
+            rxbuf->rx_buf_end = aml_hw->rx_buf_end;
 
-                        temp_list->first_len = temp_list->rx_buf_end - fw_buf_pos;
-                        temp_list->second_len = fw_new_pos - RXBUF_START_ADDR;
-                    }
-                }
-            } else { //USB
-                if (fw_new_pos > fw_buf_pos) {
-                    aml_hw->plat->hif_ops->hi_rx_buffer_read((unsigned char *)temp_list->rxbuf,
-                        (unsigned char *)(unsigned long)fw_buf_pos, need_len, USB_EP4);
+            /*
+             * if the remainder space of rx ring is not enough for a rx desc,
+             * new RX starts from RXBUF_START_ADDR.
+             */
+            if (!RXBUF_ENOUGH_FOR(RX_DESC_SIZE, fw_buf_pos, rxbuf->rx_buf_end))
+                fw_buf_pos = RXBUF_START_ADDR;
 
-                        temp_list->first_len = need_len;
-                        temp_list->second_len = 0;
-                        aml_hw->recv_pkt_len = need_len;
-                } else {  // fw_new_pos wrapped around
-                    if (temp_list->rx_buf_end - fw_buf_pos < RX_DESC_SIZE) { // After the last reading, the remaining length of buf is no longer enough to add another rxdesc
-                        if (fw_new_pos > RXBUF_START_ADDR) {
-                            aml_hw->plat->hif_ops->hi_rx_buffer_read((unsigned char *)temp_list->rxbuf,
-                                (unsigned char *)(unsigned long)RXBUF_START_ADDR, fw_new_pos - RXBUF_START_ADDR, USB_EP4);
-                            temp_list->rxbuf_data_start = RXBUF_START_ADDR;
-                        }
-                        temp_list->first_len = 0;
-                        temp_list->second_len = fw_new_pos - RXBUF_START_ADDR;
-                        aml_hw->recv_pkt_len = temp_list->second_len;
-                    } else {  // Read in two paragraphs
-                        aml_hw->plat->hif_ops->hi_rx_buffer_read((unsigned char *)temp_list->rxbuf,
-                            (unsigned char *)(unsigned long)fw_buf_pos, temp_list->rx_buf_end - fw_buf_pos, USB_EP4);
+            /* set firmware positions (pointers) */
+            rxbuf->fw_pos = fw_buf_pos;
+            rxbuf->rxbuf_data_start = fw_buf_pos;
+            rxbuf->rxbuf_data_end = fw_new_pos;
 
-                        if (fw_new_pos > RXBUF_START_ADDR)
-                            aml_hw->plat->hif_ops->hi_rx_buffer_read((unsigned char *)temp_list->rxbuf + (temp_list->rx_buf_end - fw_buf_pos),
-                                (unsigned char *)(unsigned long)RXBUF_START_ADDR, fw_new_pos - RXBUF_START_ADDR, USB_EP4);
-
-                        temp_list->first_len = temp_list->rx_buf_end - fw_buf_pos;
-                        temp_list->second_len = fw_new_pos - RXBUF_START_ADDR;
-                        aml_hw->recv_pkt_len = temp_list->first_len + temp_list->second_len;
-                    }
-                }
+            if (fw_new_pos > fw_buf_pos) {
+                first_len = fw_new_pos - fw_buf_pos;
+                second_len = 0;
+            } else {
+                first_len = rxbuf->rx_buf_end - fw_buf_pos;
+                second_len = fw_new_pos - RXBUF_START_ADDR;
             }
+            BUG_ON(first_len < RX_DESC_SIZE);
+
+            /* set host memory pointers */
+            rxbuf->pos = rxbuf->rxbuf;
+            rxbuf->gap = rxbuf->pos + first_len;
+            rxbuf->end = rxbuf->gap + second_len;
+            hi_rx_buffer_read(aml_hw, rxbuf->pos, fw_buf_pos, first_len);
+            if (second_len)
+                hi_rx_buffer_read(aml_hw, rxbuf->gap, RXBUF_START_ADDR, second_len);
+            recv_pkt_len = first_len + second_len;
+            aml_stats_rx_trans_update(aml_hw->stats, recv_pkt_len);
 
             spin_lock_bh(&aml_hw->used_list_lock);
-            list_add_tail(&temp_list->list, &aml_hw->rxbuf_used_list);
+            list_add_tail(&rxbuf->list, &aml_hw->rxbuf_used_list);
             spin_unlock_bh(&aml_hw->used_list_lock);
 
-            aml_trigger_rst_rxd(aml_hw, aml_hw->fw_new_pos);
+            BUG_ON((aml_hw->fw_new_pos & ~AML_WRAP) != fw_new_pos);
+
+            /* FIXME: call it with aml_hw->fw_new_pos or fw_new_pos? */
+            aml_trigger_rst_rxd(aml_hw, aml_hw->fw_new_pos, recv_pkt_len);
             aml_hw->fw_buf_pos = aml_hw->fw_new_pos;
         }
     }
     up(&aml_hw->aml_rx_sem);
 
     REG_SW_CLEAR_PROFILING(aml_hw, SW_PROF_AMLDATAIND);
-    return result;
+    return -1;
 }
 
-extern struct rx_reorder_info reorder_info[8];
-void aml_sdio_usb_host_reoder_handle(struct aml_hw *aml_hw, struct rx_desc_head* desc_stat,
-    uint32_t reorder_hostid_start, uint32_t reorder_len)
+#ifdef CONFIG_AML_SDIO_USB_FW_REORDER
+static void aml_sdio_usb_reorder_list_check(struct aml_hw *aml_hw, struct fw_reo_info *reo)
 {
     struct rxdata *rxdata = NULL;
     struct rxdata *rxdata_tmp = NULL;
     int i = 0;
-    int j = 0;
 
-    /* handle reoder timeout packets by e2a msg */
-    for (i = 0; i < 8; i++) {
-        spin_lock_bh(&aml_hw->reoder_lock);
-        if (reorder_info[i].hostid != 0 && reorder_info[i].reorder_len != 0) {
-            desc_stat->status = RX_STAT_FORWARD;
-            for (j = 0; j < (reorder_info[i].reorder_len & 0xFF); ++j) {
-                list_for_each_entry_safe(rxdata, rxdata_tmp, &reorder_list, list) {
-                    if (rxdata->host_id == EXCEPT_HOSTID(reorder_info[i].hostid + j)
-                        && GET_TID(rxdata->package_info) == GET_TID(reorder_info[i].reorder_len)) {
-                        rx_skb_handle(desc_stat, aml_hw, rxdata, NULL);
-                    }
-                }
+    for (i = 0; i < reo->reorder_len; ++i) {
+        u16 sn = ieee80211_sn_add(reo->hostid, i);
+
+        if (!sn)
+            sn = IEEE80211_SN_MODULO;
+
+        list_for_each_entry_safe(rxdata, rxdata_tmp, &reorder_list, list) {
+            if (rxdata->tid == reo->tid && rxdata->hostid == sn) {
+                aml_sdio_usb_rx_skb_handle(aml_hw, rxdata->skb, RX_STAT_FORWARD);
+                list_del(&rxdata->list);
+                aml_put_rxdata_back_to_free_list(rxdata);
             }
-            reorder_info[i].hostid = 0;
+        }
+    }
+}
+
+static void aml_sdio_usb_fw_reorder_handle(struct aml_hw *aml_hw, const struct rxdesc *rxdesc)
+{
+    const struct rx_hd *hd = &rxdesc->dma_hdrdesc.hd;
+    struct fw_reo_info embedded_info = {
+        .hostid = hd->reorder.hostid,
+        .tid = hd->reorder.tid,
+        .reorder_len = hd->reorder.len,
+    };
+    int i;
+
+    /*
+     * NB: handle the reorder instruction embedded in rxdesc, or received by e2a msg here.
+     * but the handling sequence can't be guaranteed same as it's generated in firmware.
+     * it introduces the out-of-order issue.
+     *
+     * Therefore, for USB/SDIO, host reorder is preferred.
+     * firmware reorder is just for internal test.
+     */
+
+    /* handle the reorder instruction embedded in rxdesc */
+    if (embedded_info.reorder_len)
+        aml_sdio_usb_reorder_list_check(aml_hw, &embedded_info);
+
+    /* handle reorder timeout packets by e2a msg */
+    for (i = 0; i < IEEE80211_NUM_UPS; i++) {
+        extern struct fw_reo_info reorder_info[IEEE80211_NUM_UPS];
+
+        spin_lock_bh(&aml_hw->reorder_lock);
+        if (reorder_info[i].reorder_len) {
+            aml_sdio_usb_reorder_list_check(aml_hw, &reorder_info[i]);
             reorder_info[i].reorder_len = 0;
         }
-        spin_unlock_bh(&aml_hw->reoder_lock);
+        spin_unlock_bh(&aml_hw->reorder_lock);
     }
-
-    /* the rxdesc include reorder info, handle reoder packets */
-    if ((reorder_hostid_start != 0) && (reorder_len != 0)) {
-        desc_stat->status = RX_STAT_FORWARD;
-        for (i = 0; i < reorder_len; ++i) {
-            list_for_each_entry_safe(rxdata, rxdata_tmp, &reorder_list, list) {
-                if (rxdata->host_id == (EXCEPT_HOSTID(reorder_hostid_start + i))
-                    && GET_TID(desc_stat->package_info) == GET_TID(rxdata->package_info)) {
-                        rx_skb_handle(desc_stat, aml_hw, rxdata, NULL);
-                }
-            }
-        }
-    }
-
 }
+#endif
 
 #ifdef CONFIG_SDIO_TX_ENH
 #ifdef SDIO_TX_ENH_DBG
@@ -2261,115 +2252,122 @@ extern cfm_log cfmlog;
 #endif
 #endif
 
+/* SDIO/USB rx task */
 int aml_rx_task(void *data)
 {
     struct aml_hw *aml_hw = (struct aml_hw *)data;
-    struct rx_desc_head desc_stat = {0};
-    uint32_t *status_framlen = NULL;
-    uint32_t *fram_len = NULL;
-    uint32_t reorder_hostid_start = 0;
-    uint32_t reorder_len = 0;
-    uint32_t *next_fw_pkt = NULL;
-    struct sched_param sch_param;
-    struct rxbuf_list *temp_list;
 
-    sch_param.sched_priority = 91;
-#ifndef CONFIG_PT_MODE
-    sched_setscheduler(current, SCHED_RR, &sch_param);
-#endif
+    aml_sched_rt_set(SCHED_RR, AML_TASK_PRI);
     while (!aml_hw->aml_rx_task_quit) {
-        /* wait for work */
-        if (down_interruptible(&aml_hw->aml_rx_sem) != 0) {
+        struct rxbuf_list *rxbuf = aml_get_rxbuf_list_from_used_list(aml_hw);
+
+        if (!rxbuf) {
+            /* wait for work */
+            if (down_interruptible(&aml_hw->aml_rx_sem) == 0)
+                continue;
+
             /* interrupted, exit */
-            printk("%s:%d wait aml_rx_sem fail!\n", __func__, __LINE__);
-            break;
-        }
-        if (aml_hw->aml_rx_task_quit) {
+            AML_INFO("wait aml_rx_sem fail!\n");
             break;
         }
 
-        while (temp_list = aml_get_rxbuf_list_from_used_list(aml_hw)) {
-            aml_hw->host_buf_start = temp_list->rxbuf;
-            aml_hw->host_buf_end = temp_list->rxbuf + temp_list->first_len + temp_list->second_len;
-            aml_hw->last_fw_pos = temp_list->rxbuf_data_start;
+#ifdef CONFIG_SDIO_TX_ENH
+#ifdef SDIO_TX_ENH_DBG
+        cfmlog.rx_cnt_in_rx++;
+#endif
+#endif
+
+        while (!aml_hw->aml_rx_task_quit && rxbuf->pos < rxbuf->end) {
+            struct rxdesc *rxdesc = (struct rxdesc *)rxbuf->pos;
+            enum rx_status_bits rx_status = rxdesc->dma_hdrdesc.hd.status;
+            struct sk_buff *skb = aml_sdio_usb_rx_skb_from_rxbuf(aml_hw, rxbuf);
 
 #ifdef CONFIG_SDIO_TX_ENH
 #ifdef SDIO_TX_ENH_DBG
-            cfmlog.rx_cnt_in_rx++;
+            cfmlog.mpdu_in_rx++;
 #endif
 #endif
 
-            while ((!aml_hw->aml_rx_task_quit) && (aml_hw->host_buf_start < aml_hw->host_buf_end)) {
-                next_fw_pkt = (uint32_t *)(aml_hw->host_buf_start + NEXT_PKT_OFFSET);
-                if (*next_fw_pkt > temp_list->rx_buf_end || *next_fw_pkt < RXBUF_START_ADDR) {
-                    printk("=======error:invalid address %08x, start:%08x, end:%08x, fw_pre_pos: %x, fw_new_pos: %x, last_fw_pos: %x\n",
-                        *next_fw_pkt, aml_hw->host_buf_start, aml_hw->host_buf_end,
-                        aml_hw->fw_buf_pos, aml_hw->fw_new_pos, aml_hw->last_fw_pos);
-                    break;
-                }
-
-#ifdef CONFIG_SDIO_TX_ENH
-#ifdef SDIO_TX_ENH_DBG
-                cfmlog.mpdu_in_rx++;
-#endif
+#ifdef CONFIG_AML_SDIO_USB_FW_REORDER
+            /* auto-learning, if firmware is configured to reorder in host */
+            if (rx_status == RX_STAT_HOST_REO)
+                aml_sdio_usb_host_reorder_detected(aml_hw);
 #endif
 
-                status_framlen = (uint32_t *)(aml_hw->host_buf_start + RX_STATUS_OFFSET);
-                fram_len = (uint32_t *)(aml_hw->host_buf_start + RX_FRMLEN_OFFSET);
-                desc_stat.hostid = (*status_framlen >> 16);
-                desc_stat.frame_len = (*fram_len << 8) | (*status_framlen & 0xff);
-                desc_stat.status = ((*status_framlen & 0xFF00) >> 8);
-#ifdef CONFIG_AML_RX_MINISIZE
-                desc_stat.package_info = *(uint16_t *)(aml_hw->host_buf_start + RX_REORDER_LEN_OFFSET);
-                reorder_len = desc_stat.package_info & 0xFF;
-                reorder_hostid_start = *(uint32_t *)(aml_hw->host_buf_start + RX_HOSTID_OFFSET);
-                reorder_hostid_start = (reorder_hostid_start & 0xFFFF);
-#else
-                desc_stat.package_info = *(uint32_t *)(aml_hw->host_buf_start + RX_REORDER_LEN_OFFSET);
-                reorder_hostid_start = *(uint32_t *)(aml_hw->host_buf_start + RX_HOSTID_OFFSET);
-                reorder_len = *(uint32_t *)(aml_hw->host_buf_start + RX_REORDER_LEN_OFFSET) & 0xFF;
-#endif
+            if (!skb) {
+                /* current frame is skipped, or internal error happened. */
+#ifdef CONFIG_AML_SDIO_USB_FW_REORDER
+            } else if (!aml_hw->aml_sdio_usb_host_reorder) {
+                if (rx_status == RX_STAT_ALLOC) {
+                    struct rxdata *rxdata = aml_get_rxdata_from_free_list();
 
-                if (*status_framlen == 0 && reorder_len == 0) {
-                    goto next_handle;
-                }
+                    /* add this frame into reorder list */
+                    if (rxdata) {
+                        struct rx_hd *hd = &rxdesc->dma_hdrdesc.hd;
 
-                rx_skb_handle(&desc_stat, aml_hw, NULL, temp_list->rxbuf + temp_list->first_len);
-
-                aml_sdio_usb_host_reoder_handle(aml_hw, &desc_stat, reorder_hostid_start, reorder_len);
-
-        next_handle:
-                if (temp_list->first_len == 0 && *next_fw_pkt >= temp_list->rxbuf_data_end) {
-                    break;
-                }
-
-                if ((temp_list->rx_buf_end - *next_fw_pkt) < RX_DESC_SIZE) {
-                    *next_fw_pkt = RXBUF_START_ADDR;
-                }
-
-                if (*next_fw_pkt > aml_hw->last_fw_pos) {
-                    spin_lock(&aml_hw->buf_start_lock);
-                    aml_hw->host_buf_start += (*next_fw_pkt - aml_hw->last_fw_pos);
-                    spin_unlock(&aml_hw->buf_start_lock);
+                        rxdata->skb = skb;
+                        rxdata->hostid = hd->hostid;
+                        rxdata->tid = hd->reorder.tid;
+                        list_add_tail(&rxdata->list, &reorder_list);
+                    }  else {
+                        dev_kfree_skb(skb);
+                    }
                 } else {
-                    spin_lock(&aml_hw->buf_start_lock);
-                    aml_hw->host_buf_start = temp_list->rxbuf + temp_list->first_len + (*next_fw_pkt - RXBUF_START_ADDR);
-                    spin_unlock(&aml_hw->buf_start_lock);
+                    aml_sdio_usb_rx_skb_handle(aml_hw, skb, rx_status);
                 }
-                aml_hw->last_fw_pos = *next_fw_pkt;
+#endif
+            } else {
+                struct hw_rxhdr *rhd = (struct hw_rxhdr *)skb->data;
+                struct aml_rhd_ext *rhd_ext = AML_RHD_EXT(rhd);
+                struct aml_reo_session *reo = NULL;
+
+                /*
+                 * if rx_status != RX_STAT_HOST_REO, the frame is not under a RX BA,
+                 * or it's received before the BA(reo) session is created,
+                 * do not try to get the reo session or handle the frame under it.
+                 */
+                if (rhd_ext->qos && rx_status == RX_STAT_HOST_REO)
+                    reo = aml_reo_session_get(aml_hw, rhd->flags_sta_idx, rhd->flags_user_prio);
+
+                if (reo) {
+                    struct sk_buff_head frames;
+
+                    __skb_queue_head_init(&frames);
+
+                    aml_reo_enqueue(reo, skb, &frames);
+                    aml_reo_session_put(reo);
+
+                    aml_reo_forward(aml_hw, &frames);
+                } else {
+                    if (rx_status == RX_STAT_HOST_REO) {
+                        net_info_ratelimited("got a frame under BA, but no reo session! "
+                                 "forward it by default. sta %u tid %u qos %d sn %u\n",
+                                 rhd->flags_sta_idx, rhd->flags_user_prio,
+                                 rhd_ext->qos, rhd_ext->sn);
+                        rx_status = RX_STAT_FORWARD;
+                    }
+                    aml_sdio_usb_rx_skb_handle(aml_hw, skb, rx_status);
+                }
             }
 
+#ifdef CONFIG_AML_SDIO_USB_FW_REORDER
+            /* handle reorder info (reorder instruction from firmware) */
+            if (!aml_hw->aml_sdio_usb_host_reorder)
+                aml_sdio_usb_fw_reorder_handle(aml_hw, rxdesc);
+#endif
+        }
+
 #ifdef CONFIG_SDIO_TX_ENH
 #ifdef SDIO_TX_ENH_DBG
-            cfmlog.avg_mpdu_in_one_rx = cfmlog.mpdu_in_rx / cfmlog.rx_cnt_in_rx;
+        cfmlog.avg_mpdu_in_one_rx = cfmlog.mpdu_in_rx / cfmlog.rx_cnt_in_rx;
 #endif
 #endif
 
-            spin_lock_bh(&aml_hw->free_list_lock);
-            list_add_tail(&temp_list->list, &aml_hw->rxbuf_free_list);
-            spin_unlock_bh(&aml_hw->free_list_lock);
-        }
+        spin_lock_bh(&aml_hw->free_list_lock);
+        list_add_tail(&rxbuf->list, &aml_hw->rxbuf_free_list);
+        spin_unlock_bh(&aml_hw->free_list_lock);
     }
+
     if (aml_hw->aml_rx_completion_init) {
         aml_hw->aml_rx_completion_init = 0;
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(5, 16, 20)
@@ -2592,7 +2590,7 @@ int aml_last_rx_info(struct aml_hw *priv, struct aml_sta *sta)
     return 0;
 }
 /**
- * aml_rxdataind - Process rx buffer
+ * aml_pci_rxdataind - Process rx buffer
  *
  * @pthis: Pointer to the object attached to the IPC structure
  *         (points to struct aml_hw is this case)
@@ -2601,10 +2599,9 @@ int aml_last_rx_info(struct aml_hw *priv, struct aml_sta *sta)
  * This function is called for each buffer received by the fw
  *
  */
- extern bool g_pcie_suspend;
-u8 aml_pci_rxdataind(void *pthis, void *arg)
+extern bool g_pcie_suspend;
+static u8 aml_pci_rxdataind(struct aml_hw *aml_hw, void *arg)
 {
-    struct aml_hw *aml_hw = pthis;
     struct aml_ipc_buf *ipc_desc = arg;
     struct aml_ipc_buf *ipc_buf;
     struct hw_rxhdr *hw_rxhdr = NULL;
@@ -2809,6 +2806,15 @@ check_len_update:
         }
 
         if (hw_rxhdr->flags_is_80211_mpdu) {
+            u32 frm_len = le32_to_cpu(hw_rxhdr->hwvect.len);
+
+            if (frm_len > skb_tailroom(skb)) {
+                // frame has been truncated by firmware, skip it
+                wiphy_err(aml_hw->wiphy, "MMPDU truncated, skip it\n");
+                dev_kfree_skb(skb);
+                goto end;
+            }
+            skb_put(skb, frm_len);
             aml_rx_mgmt_any(aml_hw, skb, hw_rxhdr);
         } else {
             aml_vif = aml_rx_get_vif(aml_hw, hw_rxhdr->flags_vif_idx);
@@ -2890,15 +2896,25 @@ end:
     return 0;
 }
 
+/**
+ * aml_rxdataind - Process rx buffer
+ *
+ * @pthis: Pointer to the object attached to the IPC structure
+ *         (points to struct aml_hw is this case)
+ * @arg: Address of the RX descriptor
+ *
+ * This function is called for each buffer received by the fw
+ *
+ */
 u8 aml_rxdataind(void *pthis, void *arg)
 {
+    struct aml_hw *aml_hw = pthis;
     s8 ret;
 
     if (aml_bus_type != PCIE_MODE) {
-        ret = aml_sdio_rxdataind(pthis, arg);
-
+        ret = aml_sdio_usb_rxdataind(aml_hw);
     } else {
-        ret = aml_pci_rxdataind(pthis, arg);
+        ret = aml_pci_rxdataind(aml_hw, arg);
     }
     return ret;
 }

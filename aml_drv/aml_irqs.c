@@ -7,6 +7,9 @@
  *
  ******************************************************************************
  */
+
+#define AML_MODULE     IRQ
+
 #include <linux/interrupt.h>
 #include "aml_defs.h"
 #include "ipc_host.h"
@@ -16,15 +19,45 @@ extern struct aml_pm_type g_wifi_pm;
 extern struct aml_bus_state_detect bus_state_detect;
 void aml_irq_usb_hdlr(struct urb *urb)
 {
+    extern int bt_wt_ptr;
+    extern int bt_rd_ptr;
+
     struct aml_hw *aml_hw = (struct aml_hw *)(urb->context);
 
     if (atomic_read(&g_wifi_pm.bus_suspend_cnt) || atomic_read(&g_wifi_pm.is_shut_down))
     {
         return ;
     }
-    urb->status = 0;
+
+    if (bus_state_detect.bus_err)
+        return;
+
+    bt_rd_ptr = __le32_to_cpu(aml_hw->usb->fw_ptrs[2]);
+    bt_wt_ptr = __le32_to_cpu(aml_hw->usb->fw_ptrs[3]);
+
+    urb->status = 0;    /* FIXME: it's dangerous, usb core may still refer to this status */
     up(&aml_hw->aml_irq_sem);
-    return ;
+}
+
+/* FIXME: move aml_usb_irq_urb_submit() into w2_usb.c */
+int aml_usb_irq_urb_submit(struct aml_hw *aml_hw)
+{
+    struct urb *urb = &aml_hw->usb->urb;
+    int ret = 0;
+
+    USB_BEGIN_LOCK();
+    if (urb->status != -EINPROGRESS) {
+        if (urb->status)
+            AML_NOTICE("%s need submit urb %d\n", __func__, urb->status);
+        ret = usb_submit_urb(urb, GFP_ATOMIC);
+    }
+    USB_END_LOCK();
+    if (ret < 0)
+        AML_ERR("%s failed %d\n", __func__, ret);
+    else if (urb->status && urb->status != -EINPROGRESS)
+        AML_NOTICE("%s urb.status %d\n", __func__, urb->status);
+
+    return ret;
 }
 
 irqreturn_t aml_irq_sdio_hdlr(int irq, void *dev_id)
@@ -45,24 +78,20 @@ void aml_irq_sdio_hdlr_for_pt(struct sdio_func *func)
     struct aml_hw *aml_hw = dev_get_drvdata(&func->dev);
     up(&aml_hw->aml_irq_sem);
 }
-
+extern void aml_set_bus_err(unsigned char bus_state);
 int aml_irq_task(void *data)
 {
     struct aml_hw *aml_hw = (struct aml_hw *)data;
     u32 status;
     int ret = 0;
-    struct sched_param sch_param;
     int try_cnt = 0;
 
-    sch_param.sched_priority = 93;
-#ifndef CONFIG_PT_MODE
-    sched_setscheduler(current, SCHED_FIFO, &sch_param);
-#endif
+    aml_sched_rt_set(SCHED_FIFO, AML_TASK_PRI);
     while (!aml_hw->aml_irq_task_quit) {
         /* wait for work */
         if (down_interruptible(&aml_hw->aml_irq_sem) != 0) {
             /* interrupted, exit */
-            printk("%s:%d wait aml_task_sem fail!\n", __func__, __LINE__);
+            AML_ERR("wait aml_task_sem fail!\n");
             break;
         }
 
@@ -97,21 +126,15 @@ int aml_irq_task(void *data)
 #endif
         ) {
             usleep_range(aml_hw->trb_wait_time, aml_hw->trb_wait_time + 10);
-            USB_BEGIN_LOCK();
             if ((atomic_read(&g_wifi_pm.bus_suspend_cnt) == 0) && (atomic_read(&g_wifi_pm.is_shut_down) == 0) &&
                 (atomic_read(&g_wifi_pm.drv_suspend_cnt) == 0)) {
-
-                if (aml_hw->g_urb->status != -EINPROGRESS)
-                {
-                    ret = usb_submit_urb(aml_hw->g_urb, GFP_ATOMIC);
-                }
+                ret = aml_usb_irq_urb_submit(aml_hw);
             } else {
                 ret = 0;
             }
-            USB_END_LOCK();
             if (ret < 0) {
                 try_cnt++;
-                ERROR_DEBUG_OUT("usb_submit_urb failed %d, bus_supend: %d, drv_suspend: %d\n",
+                ERROR_DEBUG_OUT("aml_usb_irq_urb_submit failed %d, bus_supend: %d, drv_suspend: %d\n",
                     ret, atomic_read(&g_wifi_pm.bus_suspend_cnt), atomic_read(&g_wifi_pm.drv_suspend_cnt));
                 if (try_cnt < 5) {
                     if ((atomic_read(&g_wifi_pm.bus_suspend_cnt) == 0) && (atomic_read(&g_wifi_pm.is_shut_down) == 0) &&
@@ -121,9 +144,9 @@ int aml_irq_task(void *data)
 #ifdef CONFIG_AML_RECOVERY
                     if ((atomic_read(&g_wifi_pm.bus_suspend_cnt) == 0) && (atomic_read(&g_wifi_pm.is_shut_down) == 0) &&
                         (atomic_read(&g_wifi_pm.drv_suspend_cnt) == 0))
-                        bus_state_detect.bus_err = 1;
+                        aml_set_bus_err(1);
 #endif
-                    ERROR_DEBUG_OUT("usb_submit_urb failed(%d), try cnt %d\n", ret, try_cnt);
+                    ERROR_DEBUG_OUT("aml_usb_irq_urb_submit failed(%d), try cnt %d\n", ret, try_cnt);
                 }
             } else {
                 try_cnt = 0;

@@ -7,6 +7,9 @@
  *
  ****************************************************************************************
  */
+
+#define AML_MODULE  GENERIC
+
 #include <linux/firmware.h>
 #include <linux/if_ether.h>
 
@@ -234,11 +237,15 @@ static void aml_cfg_check_macaddr(u8 *mac_addr, bool use_aml_oui)
     mac_addr[0] &= 0xfc;
 }
 
+#define IS_BCST_MAC(mac) (memcmp(mac, bcst_mac, ETH_ALEN) == 0)
+#define IS_ZERO_MAC(mac) (memcmp(mac, zero_mac, ETH_ALEN) == 0)
+
 static int aml_cfg_to_file(struct aml_hw *aml_hw, struct aml_cfg *cfg, struct file *fp)
 {
     u8 vif0_mac[ETH_ALEN] = { 0x1c, 0xa4, 0x10, 0x11, 0x22, 0x33 };
     u8 vif1_mac[ETH_ALEN] = { 0x1e, 0xa4, 0x10, 0x11, 0x22, 0x33 };
     u8 vif2_mac[ETH_ALEN] = { 0x1e, 0xa4, 0x10, 0x11, 0x22, 0x32 };
+    u8 zero_mac[ETH_ALEN] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
     u8 bcst_mac[ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
     int ret = -1;
 
@@ -260,7 +267,7 @@ static int aml_cfg_to_file(struct aml_hw *aml_hw, struct aml_cfg *cfg, struct fi
 #ifdef CONFIG_AML_PLATFORM_ANDROID
         /* get mac address from android (emmc) */
         memcpy(vif0_mac, wifi_get_mac(), ETH_ALEN);
-        if (!fp && memcmp(vif0_mac, bcst_mac, ETH_ALEN) != 0) {
+        if (!fp && !IS_BCST_MAC(vif0_mac)) {
             aml_cfg_check_macaddr(vif0_mac, 0);
             AML_INFO("get mac address from emmc is:%pM", vif0_mac);
             break;
@@ -268,7 +275,7 @@ static int aml_cfg_to_file(struct aml_hw *aml_hw, struct aml_cfg *cfg, struct fi
 #endif
         /* get mac address from efuse */
         ret = aml_cfg_get_macaddr(aml_hw, vif0_mac);
-        if (ret == 0) {
+        if (ret == 0 && !IS_BCST_MAC(vif0_mac) && !IS_ZERO_MAC(vif0_mac)) {
             aml_cfg_check_macaddr(vif0_mac, 0);
             AML_INFO("get mac address from efuse is:%pM", vif0_mac);
             break;
@@ -276,7 +283,7 @@ static int aml_cfg_to_file(struct aml_hw *aml_hw, struct aml_cfg *cfg, struct fi
 #ifdef CONFIG_AML_PLATFORM_RANDOM_MAC
         /* get mac address from android (random) */
         memcpy(vif0_mac, wifi_get_mac_random(), ETH_ALEN);
-        if (!fp && memcmp(vif0_mac, bcst_mac, ETH_ALEN) != 0) {
+        if (!fp && !IS_BCST_MAC(vif0_mac)) {
             aml_cfg_check_macaddr(vif0_mac, 0);
             AML_INFO("get mac address from platform random is:%pM", vif0_mac);
             break;
@@ -310,11 +317,13 @@ static int aml_cfg_to_file(struct aml_hw *aml_hw, struct aml_cfg *cfg, struct fi
     return 0;
 }
 
-static int aml_cfg_from_file(struct aml_cfg *cfg, struct file *fp)
+static int aml_cfg_from_file(struct aml_hw *aml_hw, struct aml_cfg *cfg, struct file *fp)
 {
     u8 fbuf[AML_CFG_FBUF_MAXLEN] = {0};
     const u8 *tag_ptr = NULL;
+    u8 zero_mac[ETH_ALEN] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
     u8 bcst_mac[ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+    u8 emmc_mac[ETH_ALEN] = {0};
     u8 chipid_h[5];
     int ret = -1;
 
@@ -344,10 +353,11 @@ static int aml_cfg_from_file(struct aml_cfg *cfg, struct file *fp)
      * - get mac from wifi_conf.txt (avoid efuse read fail)
      * */
 #ifdef CONFIG_AML_PLATFORM_ANDROID
-    /* get mac address from amlogic android(emmc) */
-    memcpy(cfg->vif0_mac, wifi_get_mac(), ETH_ALEN);
-    if (memcmp(cfg->vif0_mac, bcst_mac, ETH_ALEN) != 0)
+    memcpy(emmc_mac, wifi_get_mac(), ETH_ALEN);
+    if (memcmp(emmc_mac, bcst_mac, ETH_ALEN) != 0)
     {
+        /* get mac address from amlogic android(emmc) */
+        memcpy(cfg->vif0_mac, emmc_mac, ETH_ALEN);
         aml_cfg_check_macaddr(cfg->vif0_mac, 0);
         /* locally administered for vif1_mac and vif2_mac */
         memcpy(cfg->vif1_mac, cfg->vif0_mac, ETH_ALEN);
@@ -395,6 +405,29 @@ static int aml_cfg_from_file(struct aml_cfg *cfg, struct file *fp)
                     cfg->vif2_mac + 4, cfg->vif2_mac + 5);
             AML_INFO("get vif2 mac:"MACFMT, MACARG(cfg->vif2_mac));
         }
+
+        /* and protect for wifi_conf.txt invalid or malformed mac address */
+        if (IS_BCST_MAC(cfg->vif0_mac) || IS_ZERO_MAC(cfg->vif0_mac) ||
+            IS_BCST_MAC(cfg->vif1_mac) || IS_ZERO_MAC(cfg->vif1_mac) ||
+            IS_BCST_MAC(cfg->vif2_mac) || IS_ZERO_MAC(cfg->vif2_mac)) {
+            /* get mac address from efuse */
+            ret = aml_cfg_get_macaddr(aml_hw, cfg->vif0_mac);
+            if (ret == 0 && !IS_BCST_MAC(cfg->vif0_mac) && !IS_ZERO_MAC(cfg->vif0_mac)) {
+                aml_cfg_check_macaddr(cfg->vif0_mac, 0);
+                AML_INFO("get mac address from efuse is:%pM\n", cfg->vif0_mac);
+            } else {
+                get_random_bytes(cfg->vif0_mac, ETH_ALEN);
+                aml_cfg_check_macaddr(cfg->vif0_mac, 1);
+            }
+
+            /* locally administered for vif1_mac and vif2_mac */
+            memcpy(cfg->vif1_mac, cfg->vif0_mac, ETH_ALEN);
+            cfg->vif1_mac[0] |= BIT(1);
+            memcpy(cfg->vif2_mac, cfg->vif1_mac, ETH_ALEN);
+            cfg->vif2_mac[5] ^= BIT(0);
+            AML_INFO("renew vif0 mac:%pM, vif1 mac:%pM, vif2 mac:%pM\n",
+                    cfg->vif0_mac, cfg->vif1_mac, cfg->vif2_mac);
+        }
     }
 
     return 0;
@@ -409,12 +442,12 @@ int aml_cfg_parse(struct aml_hw *aml_hw, struct aml_cfg *cfg)
     status = aml_cfg_create(path, &fp);
     switch (status) {
         case AML_CFG_EXIST:
-            aml_cfg_from_file(cfg, fp);
+            aml_cfg_from_file(aml_hw, cfg, fp);
             break;
         case AML_CFG_CREATE:
             aml_cfg_to_file(aml_hw, cfg, fp);
             fp->f_pos = 0;
-            aml_cfg_from_file(cfg, fp);
+            aml_cfg_from_file(aml_hw, cfg, fp);
             break;
         case AML_CFG_ERROR:
             /* when fp == NULL, just update */
@@ -469,7 +502,7 @@ int aml_cfg_parse_phy(struct aml_hw *aml_hw, const char *filename,
     AML_DBG(AML_FN_ENTRY_STR);
 
     if ((ret = request_firmware(&cfg_fw, filename, aml_hw->dev))) {
-        printk(KERN_CRIT "%s: Failed to get %s (%d)\n", __func__, filename, ret);
+        AML_ERR("Failed to get %s (%d)\n", filename, ret);
         return ret;
     }
 

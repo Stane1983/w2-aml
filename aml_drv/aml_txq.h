@@ -224,9 +224,10 @@ enum aml_txq_flags {
     AML_TXQ_STOP_MU_POS  = BIT(6),
     AML_TXQ_NDEV_FLOW_CTRL = BIT(7),
     AML_TXQ_STOP_COEX_INACTIVE = BIT(8),
+    AML_TXQ_STOP_SUSPEND   = BIT(9),
     AML_TXQ_STOP         = (AML_TXQ_STOP_FULL | AML_TXQ_STOP_CSA |
                              AML_TXQ_STOP_STA_PS | AML_TXQ_STOP_VIF_PS |
-                             AML_TXQ_STOP_CHAN | AML_TXQ_STOP_COEX_INACTIVE) ,
+                             AML_TXQ_STOP_CHAN | AML_TXQ_STOP_COEX_INACTIVE | AML_TXQ_STOP_SUSPEND),
 };
 
 

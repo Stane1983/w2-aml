@@ -340,8 +340,8 @@ static void aml_txq_deinit(struct aml_hw *aml_hw, struct aml_txq *txq)
     AML_INFO("txq deinit, txq idx=%d, vif_idx=%d",
             txq->idx, txq->sta == NULL ? 0xff : txq->sta->vif_idx);
     aml_txq_del_from_hw_list(txq);
-    txq->idx = TXQ_INACTIVE;
     aml_txq_flush(aml_hw, txq);
+    txq->idx = TXQ_INACTIVE;
     spin_unlock_bh(&aml_hw->tx_lock);
 }
 
@@ -834,6 +834,12 @@ static void aml_txq_cleanup_timer_cb(struct timer_list *t)
     struct aml_hw *aml_hw = from_timer(aml_hw, t, txq_cleanup);
     struct aml_vif *vif, *vif_tmp;
     bool pkt_queue = false;
+
+    if (aml_hw->state != WIFI_SUSPEND_STATE_NONE)
+    {
+        AML_ERR(" drv is in suspend, do not clean up txq\n");
+        return;
+    }
 
     list_for_each_entry_safe(vif, vif_tmp, &aml_hw->vifs, list) {
         switch (AML_VIF_TYPE(vif)) {
@@ -1456,6 +1462,11 @@ void aml_txq_confirm_any(struct aml_hw *aml_hw, struct aml_txq *txq,
     if (txq->pkt_pushed[user])
         txq->pkt_pushed[user]--;
 
+    if (hwq->credits[user] > hwq->size) {
+        AML_INFO("hwq->credits %d, aml_hw->stats->cfm_balance[hw1->id] %d\n", hwq->credits[user], aml_hw->stats->cfm_balance[hwq->id]);
+        return;
+    }
+
     hwq->credits[user]++;
     hwq->need_processing = true;
     aml_hw->stats->cfm_balance[hwq->id]--;
@@ -1974,6 +1985,22 @@ int aml_unktxq_is_empty(struct aml_vif *aml_vif)
         return 1;
     }
     txq = aml_txq_vif_get(aml_vif, NX_UNK_TXQ_TYPE);
+    for (i = 0; i < CONFIG_USER_MAX ; i++) {
+        if (txq->pkt_pushed[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int aml_bcmctxq_is_empty(struct aml_vif *aml_vif)
+{
+    int i;
+    struct aml_txq *txq;
+    if (!aml_vif) {
+        return 1;
+    }
+    txq = aml_txq_vif_get(aml_vif, NX_BCMC_TXQ_TYPE);
     for (i = 0; i < CONFIG_USER_MAX ; i++) {
         if (txq->pkt_pushed[i]) {
             return 0;

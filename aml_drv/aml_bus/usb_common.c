@@ -1,3 +1,11 @@
+
+#define AML_MODULE  COMMON
+
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#include <linux/sched/clock.h>
+#endif
+
 #include "usb_common.h"
 #include "chip_ana_reg.h"
 #include "wifi_intf_addr.h"
@@ -8,6 +16,8 @@
 #include "fi_w2_sdio.h"
 #include "chip_intf_reg.h"
 #include "aml_interface.h"
+#include "chip_bt_pmu_reg.h"
+#include "aml_log.h"
 
 struct auc_hif_ops g_auc_hif_ops;
 struct usb_device *g_udev = NULL;
@@ -24,17 +34,19 @@ extern struct aml_bus_state_detect bus_state_detect;
 extern struct aml_pm_type g_wifi_pm;
 extern void auc_w2_ops_init(void);
 extern void extern_wifi_set_enable(int is_on);
+
 /*for bluetooth get read/write point*/
 int bt_wt_ptr = 0;
 int bt_rd_ptr = 0;
 /*co-exist flag for bt/wifi mode*/
 int coex_flag = 0;
+struct wakeup_source *aml_wifi_wakeup_source;
+
 static int auc_probe(struct usb_interface *interface, const struct usb_device_id *id)
 {
     g_udev = usb_get_dev(interface_to_usbdev(interface));
     memset(g_kmalloc_buf,0,1024*20);
     memset(g_cmd_buf,0,sizeof(struct crg_msc_cbw ));
-    g_usb_after_probe = 1;
 
     auc_w2_ops_init();
     g_auc_hif_ops.hi_enable_scat();
@@ -44,6 +56,8 @@ static int auc_probe(struct usb_interface *interface, const struct usb_device_id
     }
 #endif
     PRINT("%s(%d)\n",__func__,__LINE__);
+
+    g_usb_after_probe = 1;
     return 0;
 }
 
@@ -54,6 +68,7 @@ static void auc_disconnect(struct usb_interface *interface)
     usb_put_dev(g_udev);
     g_usb_after_probe = 0;
     atomic_set(&g_wifi_pm.bus_suspend_cnt, 0);
+    atomic_set(&g_wifi_pm.drv_suspend_cnt, 0);
     PRINT("--------aml_usb:disconnect-------\n");
 }
 
@@ -68,18 +83,63 @@ static int auc_reset_resume(struct usb_interface *interface)
 static int auc_suspend(struct usb_interface *interface,pm_message_t state)
 {
     int cnt = 0;
+     PRINT("auc_suspend!! \n");
 
-    if (atomic_read(&g_wifi_pm.wifi_enable))
+    //bt open
+    if ((auc_read_word_by_ep_for_bt(RG_BT_PMU_A16, USB_EP1) & BIT(31)))
     {
-        while (atomic_read(&g_wifi_pm.drv_suspend_cnt) == 0)
+        //bt drv suspend set bit25
+        while ((auc_read_word_by_ep_for_bt(RG_AON_A24, USB_EP1) & BIT(25)) &&
+                (bus_state_detect.bus_err == 0) &&
+                (bus_state_detect.is_recy_ongoing == 0))
         {
             msleep(50);
             cnt++;
-            if (cnt > 40)
+            if (cnt > 1000)
+            {
+                PRINT("bt drv suspend fail \n");
+                break;
+            }
+        }
+
+        // Detect a bus error or ongoing recovery,
+        // exit immediately to prevent blocking the kernel USB resume call.
+        if (bus_state_detect.bus_err || bus_state_detect.is_recy_ongoing)
+        {
+            PRINT("Detect a bus error or ongoing recovery, return\n");
+            return 0;
+        }
+
+    }
+
+    cnt = 0;
+    if (atomic_read(&g_wifi_pm.wifi_enable))
+    {
+        while ((atomic_read(&g_wifi_pm.drv_suspend_cnt) == 0) &&
+                (bus_state_detect.bus_err == 0) &&
+                (bus_state_detect.is_recy_ongoing == 0) &&
+                (atomic_read(&g_wifi_pm.wifi_suspend_state) == 0))
+        {
+            msleep(50);
+            cnt++;
+            if (cnt > 1000)
             {
                 PRINT("wifi suspend fail \n");
-                return -1;
+                break;
             }
+        }
+        if (atomic_read(&g_wifi_pm.wifi_suspend_state) != 0)
+        {
+            PRINT("Detect wifi suspend fail, return %d\n", __LINE__);
+            return 0;
+        }
+
+        // Detect a bus error or ongoing recovery,
+        // exit immediately to prevent blocking the kernel USB resume call.
+        if (bus_state_detect.bus_err || bus_state_detect.is_recy_ongoing)
+        {
+            PRINT("Detect a bus error or ongoing recovery, return\n");
+            return 0;
         }
     }
 
@@ -90,18 +150,29 @@ static int auc_suspend(struct usb_interface *interface,pm_message_t state)
 
 static int auc_resume(struct usb_interface *interface)
 {
+    PRINT("auc_resume!! \n");
+
     atomic_set(&g_wifi_pm.bus_suspend_cnt, 0);
     return 0;
 }
 #endif
 
 extern lp_shutdown_func g_lp_shutdown_func;
+extern bt_shutdown_func g_bt_shutdown_func;
+
 void auc_shutdown(struct device *dev)
 {
+    AML_INFO(" auc_shutdown begin \n");
+
     //Mask interrupt reporting to the host
     atomic_set(&g_wifi_pm.is_shut_down, 2);
 
     // Notify fw to enter shutdown mode
+    if (g_bt_shutdown_func != NULL)
+    {
+        g_bt_shutdown_func();
+    }
+
     if (g_lp_shutdown_func != NULL)
     {
         g_lp_shutdown_func();
@@ -109,7 +180,7 @@ void auc_shutdown(struct device *dev)
 
     //notify fw shutdown
     //notify bt wifi will go shutdown
-    auc_write_word_by_ep_for_wifi(RG_AON_A55, auc_read_word_by_ep_for_wifi(RG_AON_A55, USB_EP4)|BIT(28) ,USB_EP4);
+    auc_write_word_by_ep_for_wifi(RG_AON_A16, auc_read_word_by_ep_for_wifi(RG_AON_A16, USB_EP4)|BIT(28) ,USB_EP4);
 
     atomic_set(&g_wifi_pm.is_shut_down, 1);
 }
@@ -140,6 +211,31 @@ static struct usb_driver aml_usb_common_driver = {
 #endif
 };
 
+/**
+ * aml_set_bus_err - Set the bus error state and handle system wakeup
+ *
+ * Updates the bus error state. If `bus_err` is non-zero, and if the
+ * wakeup source is initialized but not active, the system is kept awake
+ * to prevent suspend during recovery.
+ *
+ * @bus_err: The bus error state. A non-zero value indicates an error.
+ */
+void aml_set_bus_err(unsigned char bus_err)
+{
+    if (bus_err) {
+        // Wake up the system and prevent it from entering
+        // suspend during the upcoming recovery process.
+        if (aml_wifi_wakeup_source && (!aml_wifi_wakeup_source->active)) {
+            __pm_stay_awake(aml_wifi_wakeup_source);
+        } else {
+            PRINT("aml_wifi_wakeup_source is not initialized or active already\n");
+        }
+    }
+
+    bus_state_detect.bus_err = bus_err;
+
+    PRINT("Bus error state updated: %d\n", bus_err);
+}
 
 int aml_usb_insmod(void)
 {
@@ -165,6 +261,16 @@ int aml_usb_insmod(void)
     USB_LOCK_INIT();
     PRINT("%s(%d) aml common driver insmod\n", __func__, __LINE__);
 
+    aml_wifi_wakeup_source = wakeup_source_register(
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+             NULL,
+#endif
+             "aml_wifi_wakeup_source");
+    if (!aml_wifi_wakeup_source) {
+        PRINT("Failed to create wakeup source\n");
+        return -ENOMEM;
+    }
+
     return err;
 }
 
@@ -184,7 +290,12 @@ void aml_usb_rmmod(void)
     extern_wifi_set_enable(1);
 #endif
 #endif
-
+    if (aml_wifi_wakeup_source) {
+        wakeup_source_unregister(aml_wifi_wakeup_source);
+        aml_wifi_wakeup_source = NULL;
+    } else {
+        PRINT("aml_wifi_wakeup_source is not initialized, unregistering is not required.\n");
+    }
    PRINT("%s(%d) aml common driver rmsmod\n",__func__, __LINE__);
 }
 void aml_usb_reset(void)
@@ -193,13 +304,13 @@ void aml_usb_reset(void)
     uint32_t try_cnt = 0;
 
 Try_again:
-    printk("%s: ******* usb reset begin *******\n", __func__);
+    AML_INFO(" ******* usb reset begin *******\n");
 
 #ifndef CONFIG_PT_MODE
 
 #ifndef CONFIG_LINUXPC_VERSION
     extern_wifi_set_enable(0);
-    while (g_usb_after_probe) {
+    while ((g_usb_after_probe) && (try_cnt <= 3)) {
         msleep(5);
         count++;
         if (count > 40 && try_cnt <= 3) {
@@ -207,7 +318,7 @@ Try_again:
             try_cnt++;
             extern_wifi_set_enable(1);
             msleep(50);
-            printk("%s: %d usb reset fail, try again(%d)\n", __func__, __LINE__, try_cnt);
+            AML_ERR(" usb reset fail, try again(%d)\n", try_cnt);
             goto Try_again;
         }
     }
@@ -222,13 +333,13 @@ Try_again:
         if (count > 200) {
             count = 0;
             try_cnt++;
-            printk("%s: %d usb reset fail, try again(%d)\n", __func__, __LINE__, try_cnt);
+            AML_ERR(" usb reset fail, try again(%d)\n", try_cnt);
             goto Try_again;
         }
     };
     bus_state_detect.bus_reset_ongoing = 0;
     bus_state_detect.bus_err = 0;
-    printk("%s: ******* usb reset end *******\n", __func__);
+    AML_INFO(" ******* usb reset end *******\n");
 
     return;
 #endif
@@ -247,4 +358,7 @@ EXPORT_SYMBOL(bt_wt_ptr);
 EXPORT_SYMBOL(bt_rd_ptr);
 EXPORT_SYMBOL(coex_flag);
 EXPORT_SYMBOL(g_chip_function_ctrl);
+EXPORT_SYMBOL(aml_wifi_wakeup_source);
+
+EXPORT_SYMBOL(aml_set_bus_err);
 

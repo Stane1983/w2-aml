@@ -19,21 +19,7 @@
 #include "fi_w2_sdio.h"
 
 #include "lmac_msg.h"
-#include "wifi_debug.h"
-
-#ifndef CONFIG_AML_DBG
-/*  #define AML_DBG(format, arg...) pr_warn(format, ## arg) */
-#define AML_DBG printk
-#else
-#define AML_DBG(a...) do {} while (0)
-#endif
-
-#define AML_FN_ENTRY_STR ">>> %s()\n", __func__
-
-#define AML_INFO(fmt, ...) do { \
-    printk("[%s %d] "fmt, __func__, __LINE__, ##__VA_ARGS__); \
-} while (0);
-
+#include "aml_log.h"
 
 #define MACFMT "%02x:%02x:%02x:%02x:%02x:%02x"
 #define MACARG(a) (a)[0], (a)[1], (a)[2], (a)[3], (a)[4], (a)[5]
@@ -157,7 +143,7 @@ int aml_ipc_init(struct aml_hw *aml_hw, u8 *shared_ram, u8 *shared_host_rxbuf, u
 void aml_ipc_deinit(struct aml_hw *aml_hw);
 void aml_ipc_start(struct aml_hw *aml_hw);
 void aml_ipc_stop(struct aml_hw *aml_hw);
-void aml_ipc_msg_push(struct aml_hw *aml_hw, void *msg_buf, uint16_t len);
+int aml_ipc_msg_push(struct aml_hw *aml_hw, void *msg_buf, uint16_t len);
 
 /**
  * IPC buffer management
@@ -298,7 +284,7 @@ void *aml_ipc_fw_trace_desc_get(struct aml_hw *aml_hw);
 const char* ssid_sprintf(const unsigned char *ssid, unsigned char ssid_len);
 u32 aml_ieee80211_chan_to_freq(u32 chan, u32 band);
 u8 aml_ieee80211_freq_to_chan(u32 freq, u32 band);
-int aml_traceind(void *pthis, int mode);
+int aml_traceind(struct aml_hw *aml_hw);
 
 void aml_txbuf_list_init(struct aml_hw *aml_hw);
 void aml_tx_cfmed_list_init(struct aml_hw *aml_hw);

@@ -1,4 +1,4 @@
-AML_VERS_NUM=v1.9.10_2024-12.20-w2 driver:daba90760
+AML_VERS_NUM=v2.0.0_2025-03.17-w2u driver:47086a67
 #KERNELDIR=/usr/lib/modules/5.8.0-63-generic/build
 PWD=$(shell pwd)
 ifeq ($(ARCH),)
@@ -133,6 +133,14 @@ CONFIG_CUSTOMER_11D_FORBIDDEN ?= y
 
 CONFIG_SDIO_TX_ENH ?= y
 
+ifeq ($(CONFIG_GOOGLE_CAST_EN),y)
+CONFIG_AML_WOW_GOOGLE_CAST_EN = y
+endif
+
+ifeq ($(CONFIG_MAGIC_PACKET_EN),y)
+CONFIG_AML_WOW_MAGIC_PACKET_EN = y
+endif
+
 subdir-ccflags-$(CONFIG_DEBUG_FS) += -DCONFIG_AML_DEBUGFS
 subdir-ccflags-$(CONFIG_DEBUG_FS) += -DCONFIG_AML_UM_HELPER_DFLT=\"$(CONFIG_AML_UM_HELPER_DFLT)\"
 subdir-ccflags-$(CONFIG_AML_P2P_DEBUGFS) += -DCONFIG_AML_P2P_DEBUGFS
@@ -144,7 +152,7 @@ subdir-ccflags-$(CONFIG_AML_WFA_CERT_MODE) += -DCONFIG_AML_WFA_CERT_MODE
 subdir-ccflags-$(CONFIG_AML_POWER_SAVE_MODE) += -DCONFIG_AML_POWER_SAVE_MODE
 subdir-ccflags-$(CONFIG_AML_USE_TASK) += -DCONFIG_AML_USE_TASK
 subdir-ccflags-$(CONFIG_AML_RECOVERY) += -DCONFIG_AML_RECOVERY
-subdir-ccflags-$(CONFIG_AML_RX_MINISIZE) += -DCONFIG_AML_RX_MINISIZE
+subdir-ccflags-$(CONFIG_AML_RX_MINISIZE) += -DCONFIG_AML_W2_RX_MINISIZE
 subdir-ccflags-$(CONFIG_AML_NAPI) += -DCONFIG_AML_NAPI
 subdir-ccflags-$(CONFIG_KERNEL_AX_PATCH) += -DCONFIG_KERNEL_AX_PATCH
 subdir-ccflags-$(CONFIG_SDIO_TX_ENH) += -DCONFIG_SDIO_TX_ENH
@@ -194,4 +202,6 @@ modules_install:
 	@$(MAKE) INSTALL_MOD_STRIP=1 M=$(M) -C $(KERNEL_SRC) modules_install
 	mkdir -p ${OUT_DIR}/../vendor_lib/modules
 	cd ${OUT_DIR}/$(M)/; find -name "*.ko" -exec cp {} ${OUT_DIR}/../vendor_lib/modules/ \;
+
+clean-files := aml_version_gen.h
 

@@ -121,9 +121,20 @@ struct aml_fw_trace {
 };
 
 struct log_file_info {
-    char *log_buf;
-    uint16_t *ptr;
+    uint8_t *log_buf;
+    uint8_t *ptr;
     struct mutex mutex;
+};
+
+struct aml_trace_nl_info {
+    struct sock * fw_log_sock;
+    int user_pid;
+    int enable;
+};
+
+struct log_nl_msg_info {
+    int msg_type;
+    int msg_len;
 };
 
 enum {

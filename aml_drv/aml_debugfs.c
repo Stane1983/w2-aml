@@ -9,6 +9,7 @@
  *
  ******************************************************************************
  */
+#define AML_MODULE     GENERIC
 
 
 #include <linux/kernel.h>
@@ -901,7 +902,7 @@ static ssize_t aml_dbgfs_fw_trace_read(struct file *file,
 
     if (aml_bus_type != PCIE_MODE) {
         struct net_device *dev = ltrace->aml_hw->vif_table[0]->ndev;
-        printk("please disable the firewall(setenforce 0),sdio and usb trace_log are saved in /data/trace_log.txt\n");
+        AML_ERR("please disable the firewall(setenforce 0),sdio and usb trace_log are saved in /data/trace_log.txt\n");
         return aml_set_fwlog_cmd(dev, 1);
     }
 
@@ -1370,17 +1371,17 @@ int print_rate(char *buf, int size, int format, int nss, int mcs, int bw,
     char he_gi[3][4] = {"0.8", "1.6", "3.2"};
 
     if (format < FORMATMOD_HT_MF) {
-        if (mcs < 4) {
+        if ((mcs >= 0) && (mcs < 4)) {
             if (r_idx) {
                 *r_idx = (mcs * 2) + pre;
                 if (bprint) {
-                    printk("%4d ", *r_idx);
+                    AML_INFO("%4d ", *r_idx);
                 } else {
                     res = scnprintf(buf, size - res, "%4d ", *r_idx);
                 }
             }
             if (bprint) {
-                printk("L-CCK/%cP%11c%2u.%1uM   ", pre > 0 ? 'L' : 'S', ' ', bitrates_cck[mcs] / 10, bitrates_cck[mcs] % 10);
+                AML_INFO("L-CCK/%cP%11c%2u.%1uM   ", pre > 0 ? 'L' : 'S', ' ', bitrates_cck[mcs] / 10, bitrates_cck[mcs] % 10);
             } else {
                 res += scnprintf(&buf[res], size - res, "L-CCK/%cP%11c%2u.%1uM   ",
                                  pre > 0 ? 'L' : 'S', ' ',
@@ -1392,30 +1393,34 @@ int print_rate(char *buf, int size, int format, int nss, int mcs, int bw,
             if (r_idx) {
                 *r_idx = N_CCK + mcs;
                 if (bprint) {
-                    printk("%4d ", *r_idx);
+                    AML_INFO("%4d ", *r_idx);
                 } else {
                     res = scnprintf(buf, size - res, "%4d ", *r_idx);
                 }
             }
-            if (bprint) {
-                printk("L-OFDM%13c%2u.0M   ", ' ', bitrates_ofdm[mcs]);
+            if ((mcs >= 0) && (mcs < 8)) {
+                if (bprint) {
+                    AML_INFO("L-OFDM%13c%2u.0M   ", ' ', bitrates_ofdm[mcs]);
+                } else {
+                    res += scnprintf(&buf[res], size - res, "L-OFDM%13c%2u.0M   ",
+                                     ' ', bitrates_ofdm[mcs]);
+                }
             } else {
-                res += scnprintf(&buf[res], size - res, "L-OFDM%13c%2u.0M   ",
-                                 ' ', bitrates_ofdm[mcs]);
+                AML_M_ERR(RATE, "FORMATMOD_HT_MF mcs:%d\n", mcs);
             }
         }
     } else if (format < FORMATMOD_VHT) {
         if (r_idx) {
             *r_idx = N_CCK + N_OFDM + nss * 32 + mcs * 4 + bw * 2 + sgi;
             if (bprint) {
-                printk("%4d ", *r_idx);
+                AML_INFO("%4d ", *r_idx);
             } else {
                 res = scnprintf(buf, size - res, "%4d ", *r_idx);
             }
         }
         mcs += nss * 8;
         if (bprint) {
-            printk("HT%d/%cGI%11cMCS%-2d   ", 20 * (1 << bw), sgi ? 'S' : 'L', ' ', mcs);
+            AML_INFO("HT%d/%cGI%11cMCS%-2d   ", 20 * (1 << bw), sgi ? 'S' : 'L', ' ', mcs);
         } else {
             res += scnprintf(&buf[res], size - res, "HT%d/%cGI%11cMCS%-2d   ",
                              20 * (1 << bw), sgi ? 'S' : 'L', ' ', mcs);
@@ -1424,13 +1429,13 @@ int print_rate(char *buf, int size, int format, int nss, int mcs, int bw,
         if (r_idx) {
             *r_idx = N_CCK + N_OFDM + N_HT + nss * 80 + mcs * 8 + bw * 2 + sgi;
             if (bprint) {
-                printk("%4d ", *r_idx);
+                AML_INFO("%4d ", *r_idx);
             } else {
                 res = scnprintf(buf, size - res, "%4d ", *r_idx);
             }
         }
         if (bprint) {
-            printk("VHT%d/%cGI%*cMCS%d/%1d  ", 20 * (1 << bw), sgi ? 'S' : 'L', bw > 2 ? 9 : 10, ' ',
+            AML_INFO("VHT%d/%cGI%*cMCS%d/%1d  ", 20 * (1 << bw), sgi ? 'S' : 'L', bw > 2 ? 9 : 10, ' ',
                      mcs, nss + 1);
         } else {
             res += scnprintf(&buf[res], size - res, "VHT%d/%cGI%*cMCS%d/%1d  ",
@@ -1441,58 +1446,70 @@ int print_rate(char *buf, int size, int format, int nss, int mcs, int bw,
         if (r_idx) {
             *r_idx = N_CCK + N_OFDM + N_HT + N_VHT + nss * 144 + mcs * 12 + bw * 3 + sgi;
             if (bprint) {
-                printk("%4d ", *r_idx);
+                AML_INFO("%4d ", *r_idx);
             } else {
                 res = scnprintf(buf, size - res, "%4d ", *r_idx);
             }
         }
-        if (bprint) {
-            printk("HE%d/GI%s%4s%*cMCS%d/%1d%*c",
-                    20 * (1 << bw), he_gi[sgi], dcm ? "/DCM" : "",
-                    bw > 2 ? 4 : 5, ' ', mcs, nss + 1, mcs > 9 ? 1 : 2, ' ');
+        if ((sgi >= 0) && (sgi < 3)) {
+            if (bprint) {
+                AML_INFO("HE%d/GI%s%4s%*cMCS%d/%1d%*c",
+                        20 * (1 << bw), he_gi[sgi], dcm ? "/DCM" : "",
+                        bw > 2 ? 4 : 5, ' ', mcs, nss + 1, mcs > 9 ? 1 : 2, ' ');
+            } else {
+                res += scnprintf(&buf[res], size - res, "HE%d/GI%s%4s%*cMCS%d/%1d%*c",
+                                 20 * (1 << bw), he_gi[sgi], dcm ? "/DCM" : "",
+                                 bw > 2 ? 4 : 5, ' ', mcs, nss + 1, mcs > 9 ? 1 : 2, ' ');
+            }
         } else {
-            res += scnprintf(&buf[res], size - res, "HE%d/GI%s%4s%*cMCS%d/%1d%*c",
-                             20 * (1 << bw), he_gi[sgi], dcm ? "/DCM" : "",
-                             bw > 2 ? 4 : 5, ' ', mcs, nss + 1, mcs > 9 ? 1 : 2, ' ');
+            AML_M_ERR(RATE, "FORMATMOD_HE_SU sgi:%d\n", sgi);
         }
     } else if (format == FORMATMOD_HE_MU){
         if (r_idx) {
             *r_idx = N_CCK + N_OFDM + N_HT + N_VHT + N_HE_SU + nss * 216 + mcs * 18 + bw * 3 + sgi;
             if (bprint) {
-                printk("%4d ", *r_idx);
+                AML_INFO("%4d ", *r_idx);
             } else {
                 res = scnprintf(buf, size - res, "%4d ", *r_idx);
             }
         }
-        if (bprint) {
-            printk("HEMU-%d/GI%s%*cMCS%d/%1d%*c",
-                     ru_size_he_mu[bw], he_gi[sgi], bw > 1 ? 5 : 6, ' ',
-                     mcs, nss + 1, mcs > 9 ? 1 : 2, ' ');
+        if ((sgi >= 0) && (sgi < 3) && (bw >= 0) && (bw < 6)) {
+            if (bprint) {
+                AML_INFO("HEMU-%d/GI%s%*cMCS%d/%1d%*c",
+                         ru_size_he_mu[bw], he_gi[sgi], bw > 1 ? 5 : 6, ' ',
+                         mcs, nss + 1, mcs > 9 ? 1 : 2, ' ');
+            } else {
+                res += scnprintf(&buf[res], size - res, "HEMU-%d/GI%s%*cMCS%d/%1d%*c",
+                                 ru_size_he_mu[bw], he_gi[sgi], bw > 1 ? 5 : 6, ' ',
+                                 mcs, nss + 1, mcs > 9 ? 1 : 2, ' ');
+            }
         } else {
-            res += scnprintf(&buf[res], size - res, "HEMU-%d/GI%s%*cMCS%d/%1d%*c",
-                             ru_size_he_mu[bw], he_gi[sgi], bw > 1 ? 5 : 6, ' ',
-                             mcs, nss + 1, mcs > 9 ? 1 : 2, ' ');
+            AML_M_ERR(RATE, "FORMATMOD_HE_MU sgi:%d, bw:%d\n", sgi, bw);
         }
-
     }
     else // HE ER
     {
         if (r_idx) {
             *r_idx = N_CCK + N_OFDM + N_HT + N_VHT + N_HE_SU + N_HE_MU + bw * 9 + mcs * 3 + sgi;
             if (bprint) {
-                printk("%4d ", *r_idx);
+                AML_INFO("%4d ", *r_idx);
             } else {
                 res = scnprintf(buf, size - res, "%4d ", *r_idx);
             }
         }
-        if (bprint) {
-            printk("HEER-%d/GI%s%4s%1cMCS%d/%1d%2c",
-                     ru_size_he_er[bw], he_gi[sgi], dcm ? "/DCM" : "",
-                     ' ', mcs, nss + 1, ' ');
+        if ((sgi >= 0) && (sgi < 3) && ((bw == 0) || (bw == 1))) {
+            if (bprint) {
+                AML_INFO("HEER-%d/GI%s%4s%1cMCS%d/%1d%2c",
+                         ru_size_he_er[bw], he_gi[sgi], dcm ? "/DCM" : "",
+                         ' ', mcs, nss + 1, ' ');
+            } else {
+                AML_INFO("size-res %d, res %d, bw %d, sgi %d\n", size - res, res, bw, sgi);
+                res += scnprintf(&buf[res], size - res, "HEER-%d/GI%s%4s%1cMCS%d/%1d%2c",
+                                 ru_size_he_er[bw], he_gi[sgi], dcm ? "/DCM" : "",
+                                 ' ', mcs, nss + 1, ' ');
+            }
         } else {
-            res += scnprintf(&buf[res], size - res, "HEER-%d/GI%s%4s%1cMCS%d/%1d%2c",
-                             ru_size_he_er[bw], he_gi[sgi], dcm ? "/DCM" : "",
-                             ' ', mcs, nss + 1, ' ');
+            AML_M_ERR(RATE, "FORMATMOD_HE_ER sgi:%d, bw:%d\n", sgi, bw);
         }
     }
 
@@ -2534,7 +2551,7 @@ void aml_dbgfs_fw_trace_create(struct aml_hw *aml_hw)
         aml_hw->debugfs.fw_trace.buf.data = NULL;
     }
 err:
-    printk("create trace dbgfs fail");
+    AML_ERR("create trace dbgfs fail");
 }
 
 int aml_dbgfs_register(struct aml_hw *aml_hw, const char *name)

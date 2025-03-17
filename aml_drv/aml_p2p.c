@@ -10,6 +10,8 @@
  ******************************************************************************
  */
 
+#define AML_MODULE          P2P
+
 #include "aml_msg_tx.h"
 #include "aml_mod_params.h"
 #include "reg_access.h"
@@ -40,9 +42,9 @@ char p2p_action_trace[][30] = {
     "P2P ACT REV"
 };
 
-u32 aml_get_p2p_ie_offset(const u8 *buf,u32 frame_len)
+u32 aml_get_p2p_ie_offset(const u8 *buf, u32 frame_len, u8 element_offset)
 {
-    u32 offset = MAC_SHORT_MAC_HDR_LEN + P2P_ACTION_HDR_LEN;
+    u32 offset = element_offset;
     u8 id;
     u8 len;
 
@@ -50,7 +52,25 @@ u32 aml_get_p2p_ie_offset(const u8 *buf,u32 frame_len)
         id = buf[offset];
         len = buf[offset + 1];
         if ((id == P2P_ATTR_VENDOR_SPECIFIC) &&
-            (buf[offset + 2] == 0x50) && (buf[offset + 3] == 0x6f) && (buf[offset + 4] == 0x9a)) {
+            (buf[offset + 2] == 0x50) && (buf[offset + 3] == 0x6f) && (buf[offset + 4] == 0x9a) && (buf[offset + 5] == 0x09)) {
+            return offset;
+        }
+        offset += len + 2;
+    }
+    return 0;
+}
+
+u32 aml_get_wfd_ie_offset(const u8 *buf, u32 frame_len, u8 element_offset)
+{
+    u32 offset = element_offset;
+    u8 id;
+    u8 len;
+
+    while (offset < frame_len) {
+        id = buf[offset];
+        len = buf[offset + 1];
+        if ((id == P2P_ATTR_VENDOR_SPECIFIC) &&
+            (buf[offset + 2] == 0x50) && (buf[offset + 3] == 0x6f) && (buf[offset + 4] == 0x9a) && (buf[offset + 5] == 0x0a)) {
             return offset;
         }
         offset += len + 2;
@@ -128,7 +148,7 @@ u16 aml_scc_p2p_rewrite_chan_list(u8* buf, u32 offset, u8 target_chan_no, enum n
 
 void aml_change_p2p_chanlist(struct aml_vif *vif, u8 *buf, u32 frame_len, u32* frame_len_offset, struct cfg80211_chan_def chan_def)
 {
-    u32 offset = aml_get_p2p_ie_offset(buf,frame_len);
+    u32 offset = aml_get_p2p_ie_offset(buf, frame_len, MAC_SHORT_MAC_HDR_LEN + P2P_ACTION_HDR_LEN);
     //idx pointer to wifi-direct ie
     if (offset != 0) {
         u8* p2p_ie_len_p;
@@ -201,7 +221,7 @@ void aml_change_p2p_operchan(struct aml_vif *vif, u8 *buf, u32 frame_len, struct
     u16 len;
     u8 chan_no = aml_ieee80211_freq_to_chan(chan_def.chan->center_freq, chan_def.chan->band);
 
-    offset = aml_get_p2p_ie_offset(buf,frame_len);
+    offset = aml_get_p2p_ie_offset(buf, frame_len, MAC_SHORT_MAC_HDR_LEN + P2P_ACTION_HDR_LEN);
     //idx pointer to wifi-direct ie
     if (offset != 0) {
         u8 oper_class_org;
@@ -253,7 +273,7 @@ void aml_change_p2p_intent(struct aml_vif *vif, u8 *buf, u32 frame_len,u32* fram
     u8 id;
     u16 len;
     bool tie_breaker;
-    offset = aml_get_p2p_ie_offset(buf,frame_len);
+    offset = aml_get_p2p_ie_offset(buf, frame_len, MAC_SHORT_MAC_HDR_LEN + P2P_ACTION_HDR_LEN);
     //idx pointer to wifi-direct ie
     if (offset != 0) {
         p_ie_len = &buf[offset + 1];
@@ -273,7 +293,7 @@ void aml_change_p2p_intent(struct aml_vif *vif, u8 *buf, u32 frame_len,u32* fram
 
 void aml_rx_parse_p2p_chan_list(u8 *buf, u32 frame_len)
 {
-    u32 offset = aml_get_p2p_ie_offset(buf, frame_len);
+    u32 offset = aml_get_p2p_ie_offset(buf, frame_len, MAC_SHORT_MAC_HDR_LEN + P2P_ACTION_HDR_LEN);
     //idx pointer to wifi-direct ie
     if (offset != 0) {
         u8 id;

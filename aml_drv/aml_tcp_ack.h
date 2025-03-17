@@ -62,8 +62,13 @@ struct aml_tcp_sess_info {
     struct aml_pkt_info pkt_info;
 };
 
+#define FORCE_DELAY_ACK_AUTO 0
+#define FORCE_DELAY_ACK_DISABLE 1
+#define FORCE_DELAY_ACK_ENABLE 2
+
 struct aml_tcp_sess_mgr {
     atomic_t enable;
+    atomic_t force_delay_ack;
     atomic_t dynamic_adjust;
     int used_num;
     int free_index;
@@ -89,6 +94,6 @@ void aml_tcp_delay_ack_deinit(struct aml_hw *aml_hw);
 void aml_tcp_delay_ack_init(struct aml_hw *aml_hw);
 int aml_filter_tx_tcp_ack(struct net_device *dev, struct sk_buff *skb, struct aml_sta *sta);
 void aml_check_tcpack_skb(struct aml_hw *aml_hw, struct sk_buff *skb, u32 len);
-int aml_set_tcp_ack_accord_to_rssi(struct aml_sta *sta, struct aml_hw *aml_hw, s32_l rssi);
+void aml_set_tcp_ack_auto(struct aml_hw *aml_hw);
 
 #endif

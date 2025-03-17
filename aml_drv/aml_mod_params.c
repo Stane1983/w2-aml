@@ -9,6 +9,9 @@
 *
 ******************************************************************************
 */
+
+#define AML_MODULE  GENERIC
+
 #include <linux/module.h>
 #include <linux/rtnetlink.h>
 

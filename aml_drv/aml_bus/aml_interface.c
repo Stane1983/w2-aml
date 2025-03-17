@@ -1,22 +1,73 @@
+#define AML_MODULE                  INTERFACE
+
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include "aml_static_buf.h"
 #include "aml_interface.h"
+#include "usb_common.h"
 #include "aml_compat.h"
+#include "aml_log.h"
 
 char *bus_type = "pci";
 unsigned int aml_bus_type;
 unsigned char wifi_drv_rmmod_ongoing = 0;
 struct aml_bus_state_detect bus_state_detect;
 struct aml_pm_type g_wifi_pm = {0};
+unsigned char aml_wifi_detect_bt_status = 0;
+
+const char *aml_log_level_names[] = {
+#define AML_LOG_LEVEL_NAME(_level)  [LOGLEVEL_##_level] = #_level
+    AML_LOG_LEVEL_NAME(EMERG),
+    AML_LOG_LEVEL_NAME(ALERT),
+    AML_LOG_LEVEL_NAME(CRIT),
+    AML_LOG_LEVEL_NAME(ERR),
+    AML_LOG_LEVEL_NAME(WARNING),
+    AML_LOG_LEVEL_NAME(NOTICE),
+    AML_LOG_LEVEL_NAME(INFO),
+    AML_LOG_LEVEL_NAME(DEBUG),
+#undef AML_LOG_LEVEL_NAME
+    NULL,
+};
+EXPORT_SYMBOL(aml_log_level_names);
+
+const char *aml_log_module_names[] = {
+#define AML_LOG_MODULE(_m, _level)  [AML_LOG_MODULE_##_m] = #_m,
+    AML_LOG_MODULES
+#undef AML_LOG_MODULE
+    NULL,
+};
+EXPORT_SYMBOL(aml_log_module_names);
+
+s8 aml_log_m_levels[AML_LOG_MODULE_MAX] = {
+#define AML_LOG_MODULE(_m, _level)  [AML_LOG_MODULE_##_m] = LOGLEVEL_##_level,
+    AML_LOG_MODULES
+#undef AML_LOG_MODULE
+};
+EXPORT_SYMBOL(aml_log_m_levels);
+
+int aml_name_index(const char *names[], const char *name)
+{
+    int i;
+
+    if (!names || !name)
+        return -1;
+
+    for (i = 0; names[i]; i++) {
+        if (strcasecmp(name, names[i]) == 0)
+            return i;
+    }
+    return -1;
+}
+EXPORT_SYMBOL(aml_name_index);
 
 EXPORT_SYMBOL(bus_state_detect);
 EXPORT_SYMBOL(wifi_drv_rmmod_ongoing);
 EXPORT_SYMBOL(bus_type);
 EXPORT_SYMBOL(aml_bus_type);
 EXPORT_SYMBOL(g_wifi_pm);
+EXPORT_SYMBOL(aml_wifi_detect_bt_status);
 
 extern int aml_usb_insmod(void);
 extern int aml_usb_rmmod(void);
@@ -29,7 +80,7 @@ extern void aml_usb_reset(void);
 
 void bus_detect_work(struct work_struct *p_work)
 {
-    printk("%s: enter\n", __func__);
+    AML_FN_ENTRY();
     if (aml_bus_type == SDIO_MODE) {
         aml_sdio_reset();
     } else if (aml_bus_type == USB_MODE) {
@@ -54,8 +105,7 @@ static void state_detect_cb(struct timer_list* t)
     if (!bus_state_detect.is_drv_load_finished || (bus_state_detect.bus_err == 2)) {
         mod_timer(&bus_state_detect.timer, jiffies + AML_SDIO_STATE_MON_INTERVAL);
     } else {
-
-        printk("%s: stop bus detected state timer\n", __func__);
+        AML_ERR("stop bus detected state timer\n");
     }
 }
 
@@ -80,21 +130,24 @@ void aml_bus_state_detect_deinit()
 int aml_bus_intf_insmod(void)
 {
     int ret;
+
+    AML_NOTICE("CONFIG_AML_LOG_BUILD_LEVEL=%s\n", aml_log_level_names[CONFIG_AML_LOG_BUILD_LEVEL]);
+
     if (aml_init_wlan_mem()) {
-        printk("aml_init_wlan_mem fail\n");
+        AML_ERR("aml_init_wlan_mem fail\n");
         return -EPERM;
     }
     if (strncmp(bus_type,"usb",3) == 0) {
         aml_bus_type = USB_MODE;
         ret = aml_usb_insmod();
         if (ret) {
-            printk("aml usb bus init fail\n");
+            AML_ERR("aml usb bus init fail\n");
         }
     } else if (strncmp(bus_type,"sdio",4) == 0) {
         aml_bus_type = SDIO_MODE;
         ret = aml_sdio_insmod();
         if (ret) {
-            printk("aml sdio bus init fail\n");
+            AML_ERR("aml sdio bus init fail\n");
 #ifdef CONFIG_PT_MODE
             return ret;
 #endif
@@ -103,12 +156,14 @@ int aml_bus_intf_insmod(void)
         aml_bus_type = PCIE_MODE;
         ret = aml_pci_insmod();
         if (ret) {
-            printk("aml sdio bus init fail\n");
+            AML_ERR("aml sdio bus init fail\n");
         }
     }
     atomic_set(&g_wifi_pm.bus_suspend_cnt, 0);
     atomic_set(&g_wifi_pm.drv_suspend_cnt, 0);
     atomic_set(&g_wifi_pm.is_shut_down, 0);
+    atomic_set(&g_wifi_pm.wifi_suspend_state, 0);
+
 #ifndef CONFIG_PT_MODE
     if (aml_bus_type == SDIO_MODE) {
         aml_bus_state_detect_init();
@@ -134,6 +189,7 @@ void aml_bus_intf_rmmod(void)
     aml_deinit_wlan_mem();
 }
 
+bt_shutdown_func g_bt_shutdown_func = NULL;
 lp_shutdown_func g_lp_shutdown_func = NULL;
 
 EXPORT_SYMBOL(aml_bus_state_detect_deinit);
@@ -144,4 +200,5 @@ module_exit(aml_bus_intf_rmmod);
 
 MODULE_LICENSE("GPL");
 
+EXPORT_SYMBOL(g_bt_shutdown_func);
 EXPORT_SYMBOL(g_lp_shutdown_func);

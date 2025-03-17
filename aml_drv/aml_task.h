@@ -16,10 +16,13 @@
 #include "aml_utils.h"
 #include "aml_defs.h"
 
+/*
+ * Wi-Fi task's priority should not be higher than video decoder,
+ * PS: the priority of surfaceflinger is 98 in S905L3Y (kernel 4.9).
+ */
+#define AML_TASK_PRI   98
 
 #ifdef CONFIG_AML_USE_TASK
-
-#define AML_TASK_PRI   20
 
 struct aml_task {
     struct task_struct  *task;

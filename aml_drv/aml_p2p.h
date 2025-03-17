@@ -10,6 +10,7 @@
 #define P2P_ELEMENT_HDR_LEN         6
 #define P2P_ATT_COUNTRY_STR_LEN     3
 #define P2P_ATT_BODY_OFT            3
+#define DIRECT_SSID_LEN             7
 
 enum p2p_attr_id
 {
@@ -50,11 +51,11 @@ enum p2p_action_type {
 
 extern char p2p_pub_action_trace[][30];
 extern char p2p_action_trace[][30];
-extern u32 aml_get_p2p_ie_offset(const u8 *buf,u32 frame_len);
+extern u32 aml_get_p2p_ie_offset(const u8 *buf, u32 frame_len, u8 element_offset);
+extern u32 aml_get_wfd_ie_offset(const u8 *buf, u32 frame_len, u8 element_offset);
 extern void aml_change_p2p_chanlist(struct aml_vif *vif, u8 *buf, u32 frame_len,u32* frame_len_offset,struct cfg80211_chan_def chan_def);
 extern void aml_change_p2p_intent(struct aml_vif *vif, u8 *buf, u32 frame_len,u32* frame_len_offset);
 extern void aml_change_p2p_operchan(struct aml_vif *vif, u8 *buf, u32 frame_len, struct cfg80211_chan_def chan_def);
 void aml_rx_parse_p2p_chan_list(u8 *buf, u32 frame_len);
-
 
 #endif /* _AML_P2P_H_ */

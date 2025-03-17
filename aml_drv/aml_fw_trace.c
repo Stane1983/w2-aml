@@ -7,6 +7,9 @@
  *
  ******************************************************************************
  */
+
+#define AML_MODULE     TRACE
+
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
@@ -20,6 +23,7 @@
 #include "aml_defs.h"
 #include "wifi_w2_shared_mem_cfg.h"
 #include "share_mem_map.h"
+#include "aml_prealloc.h"
 
 #define TRACE_LEVEL (0x00d25fd8)  //0x00825fd8
 
@@ -44,6 +48,9 @@
 #define AML_FW_TRACE_RESET "*** RESET ***\n"
 #define AML_FW_TRACE_RESET_SIZE sizeof(AML_FW_TRACE_RESET) - 1 // don't count '\0'
 
+#define LOG_BUF_SIZE (128 * 1024)
+#define TRACE_TRAN_ONCE_SIZE (16 * 1024)
+
 static int trace_last_reset=0;
 
 static const int startup_max_to = 500;
@@ -57,17 +64,6 @@ struct log_file_info trace_log_file_info;
 
 extern struct auc_hif_ops g_auc_hif_ops;
 extern struct pci_dev *g_pci_dev;
-
-struct aml_trace_nl_info {
-    struct sock * fw_log_sock;
-    int user_pid;
-    int enable;
-};
-
-struct log_nl_msg_info {
-    int msg_type;
-    int msg_len;
-};
 
 struct aml_trace_nl_info g_trace_nl_info;
 
@@ -626,9 +622,9 @@ void _aml_fw_trace_dump(struct aml_hw *aml_hw, struct aml_fw_trace_buf *trace_bu
         ptr_flag = ptr;
         aml_trace_buf_init();
         if (aml_bus_type == USB_MODE) {
-            aml_hw->plat->hif_ops->hi_read_sram((unsigned char *)ptr, (unsigned char *)(SYS_TYPE)USB_TRACE_START_ADDR, USB_TRACE_TOTAL_SIZE, USB_EP4);
+            aml_hw->plat->hif_ops->hi_read_sram((unsigned char *)ptr, (unsigned char *)(SYS_TYPE)TRACE_START_ADDR, TRACE_TOTAL_SIZE, USB_EP4);
         } else if (aml_bus_type == SDIO_MODE) {
-            aml_hw->plat->hif_sdio_ops->hi_random_ram_read((unsigned char *)ptr, (unsigned char *)(SYS_TYPE)SDIO_TRACE_START_ADDR, SDIO_TRACE_TOTAL_SIZE);
+            aml_hw->plat->hif_sdio_ops->hi_random_ram_read((unsigned char *)ptr, (unsigned char *)(SYS_TYPE)TRACE_START_ADDR, TRACE_TOTAL_SIZE);
         }
         ptr += *trace_buf->start;
     }
@@ -1009,6 +1005,9 @@ int aml_trace_buf_init(void)
 {
     int ret = 0;
     static int isInit = 0;
+#ifdef CONFIG_AML_PREALLOC_BUF_STATIC
+    size_t out_size = 0;
+#endif
 
     if (aml_bus_type != PCIE_MODE) {
         if (!isInit) {
@@ -1018,21 +1017,20 @@ int aml_trace_buf_init(void)
         }
 
         mutex_lock(&trace_log_file_info.mutex);
-        if (!trace_log_file_info.log_buf) {
-            trace_log_file_info.log_buf = kmalloc(64 * 1024, GFP_DMA | GFP_ATOMIC);
-            if (!trace_log_file_info.log_buf) {
-                AML_INFO("alloc memory failed");
-                ret = -1;
-            }
+#ifdef CONFIG_AML_PREALLOC_BUF_STATIC
+        trace_log_file_info.ptr = aml_prealloc_get(PREALLOC_TRACE_PTR_EXPEND, AML_PREALLOC_TRACE_PTR_EXPEND_BUF_SIZE, &out_size);
+        if (!trace_log_file_info.ptr) {
+            AML_INFO("prealloc trace ptr buf failed");
+            ret = -1;
         }
 
-        if (!trace_log_file_info.ptr) {
-            trace_log_file_info.ptr = kmalloc(33 * 1024, GFP_DMA | GFP_ATOMIC);
-            if (!trace_log_file_info.ptr) {
-                AML_INFO("alloc memory failed");
-                ret = -1;
-            }
+        trace_log_file_info.log_buf = aml_prealloc_get(PREALLOC_TRACE_STR_EXPEND, AML_PREALLOC_TRACE_STR_EXPEND_BUF_SIZE, &out_size);
+        if (!trace_log_file_info.log_buf) {
+            AML_INFO("prealloc trace log_buf failed");
+            ret = -1;
         }
+#endif
+
         mutex_unlock(&trace_log_file_info.mutex);
     }
 
@@ -1054,6 +1052,7 @@ void aml_trace_buf_deinit(void)
     return;
 }
 
+#if 0   // useless
 loff_t aml_get_file_size(const char *filename)
 {
     struct file *fp = NULL;
@@ -1064,9 +1063,9 @@ loff_t aml_get_file_size(const char *filename)
 
     fp = FILE_OPEN(filename, O_CREAT | O_RDONLY, 0644);
     if (IS_ERR(fp)) {
-        printk("%s: %s open failed: PTR_ERR(fp) = %d\n", __func__, filename, PTR_ERR(fp));
+        AML_ERR("%s open failed: PTR_ERR(fp) = %d\n", filename, PTR_ERR(fp));
         if (PTR_ERR(fp) == -13) {
-            printk("/* Permission denied */");
+            AML_ERR("/* Permission denied */");
         }
         goto err;
     }
@@ -1075,7 +1074,7 @@ loff_t aml_get_file_size(const char *filename)
     ret = FILE_STAT(filename, &st);
     if (ret < 0) {
         FILE_CLOSE(fp, NULL);
-        printk("%s: file stat error, err = %d\n", __func__, ret);
+        AML_ERR("file stat error, err = %d\n", ret);
         goto err;
     }
 #endif
@@ -1090,51 +1089,54 @@ loff_t aml_get_file_size(const char *filename)
 err:
     return (loff_t)(-1);
 }
+#endif
 
-
+#define TRACE_TRAN_ONCE_SIZE (64 * 1024)
 int aml_trace_log_to_file(uint16_t *trace, uint16_t *trace_limit)
 {
-    struct file *fp = NULL;
-    loff_t file_size = 0;
-    unsigned int file_mode;
     char str[1824] = {0};
     unsigned int offset = 0;
+    unsigned int tran_len = 0;
     size_t str_size;
     int sock_wr_len = 0;
+    int ret = 0;
+    int save_len = 0;
 
-    if (!trace_log_file_info.log_buf)
-        goto err;
+    memset(trace_log_file_info.log_buf, 0, AML_PREALLOC_TRACE_STR_EXPEND_BUF_SIZE);
 
-    memset(trace_log_file_info.log_buf, 0, 64*1024);
+    if (!trace_log_file_info.log_buf) {
+        AML_INFO("trace log file buf not ready \n");
+        return -1;
+    }
 
     while (1) {
+        if ((trace >= trace_limit) || (*trace == AML_FW_TRACE_LAST_ENTRY)) {
+            break;
+        }
         str_size = sizeof(str);
         memset(str, 0, str_size);
         trace = aml_fw_trace_to_str(trace, str, &str_size);
-        memcpy(trace_log_file_info.log_buf + offset, str, str_size);
-        offset += str_size;
-
-        if (trace >= trace_limit || *trace == AML_FW_TRACE_LAST_ENTRY) {
+        if ((offset > AML_PREALLOC_TRACE_STR_EXPEND_BUF_SIZE) || ((offset + str_size) > AML_PREALLOC_TRACE_STR_EXPEND_BUF_SIZE)) {
+            AML_INFO("offset exceed malloc buf in trace_to_str");
             break;
         }
+        memcpy(trace_log_file_info.log_buf + offset, str, str_size);
+        offset += str_size;
     }
+
     if (g_trace_nl_info.enable) {
         do {
-            if (offset > 16 *1024) {
-                aml_send_log_to_user(trace_log_file_info.log_buf + sock_wr_len, 16 *1024, AML_TRACE_FW_LOG_UPLOAD);
-                sock_wr_len += 16 *1024;
-                offset -= 16 *1024;
-            } else {
-                aml_send_log_to_user(trace_log_file_info.log_buf + sock_wr_len, offset, AML_TRACE_FW_LOG_UPLOAD);
-                sock_wr_len += offset;
-                offset = 0;
+            tran_len = (offset >= TRACE_TRAN_ONCE_SIZE) ? TRACE_TRAN_ONCE_SIZE : offset;
+            ret = aml_send_log_to_user(trace_log_file_info.log_buf + sock_wr_len, tran_len, AML_TRACE_FW_LOG_UPLOAD);
+            if (ret < 0) {
+                AML_INFO("send fail ret:%d sock_wr_len:%d offset:%d", ret, sock_wr_len, offset);
             }
+            sock_wr_len += tran_len;
+            offset -= tran_len;
         } while (offset > 0);
     }
 
     return 0;
-err:
-    return -1;
 }
 
 // recv msg handl function
@@ -1220,6 +1222,7 @@ int aml_send_log_to_user(char *pbuf, uint16_t len, int msg_type)
     {
         AML_INFO("nlmsg_put failure\n");
         nlmsg_free(nl_skb);
+        /* coverity[leaked_storage] - nl_skb is freed */
         return -1;
     }
     NETLINK_CB(nl_skb).portid = 0;
@@ -1233,11 +1236,14 @@ int aml_send_log_to_user(char *pbuf, uint16_t len, int msg_type)
     if (pbuf) {
         memcpy(nlmsg_data(nlh) + sizeof(struct log_nl_msg_info), pbuf, len);
     }
-    ret = netlink_unicast(g_trace_nl_info.fw_log_sock, nl_skb, g_trace_nl_info.user_pid, 0);
+    ret = netlink_unicast(g_trace_nl_info.fw_log_sock, nl_skb, g_trace_nl_info.user_pid, 1);
 
-   // AML_INFO("==== kernel upload msg to user result: %d, seq: %d\n", ret, seq_num - 1);
+    if (ret < 0) {
+        AML_INFO("==== kernel upload msg to user result: %d, seq: %d\n", ret, seq_num - 1);
+    }
+
+    /* coverity[leaked_storage] - nl_skb will be freed later */
     return ret;
-
 }
 
 void aml_send_err_info_to_diag(char *pbuf, int len)

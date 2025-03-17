@@ -1,3 +1,6 @@
+
+#define AML_MODULE  COMMON
+
 #include <linux/mutex.h>
 #include "chip_ana_reg.h"
 #include "chip_pmu_reg.h"
@@ -10,6 +13,7 @@
 #include "sg_common.h"
 #include "aml_interface.h"
 #include "w2_sdio.h"
+#include "aml_log.h"
 
 #ifdef CONFIG_PT_MODE
 unsigned char g_sdio_is_probe = 0;
@@ -108,7 +112,7 @@ int _aml_sdio_request_buffer(unsigned char func_num,
     bool fifo = (fix_incr == SDIO_OPMODE_FIXED);
 
     if (!func) {
-        printk("func is NULL!\n");
+        AML_ERR("func is NULL!\n");
         return -1;
     }
 
@@ -173,7 +177,7 @@ int aml_sdio_probe(struct sdio_func *func, const struct sdio_device_id *id)
     else
         sdio_set_block_size(func, 512);
 
-    printk("%s(%d): func->num %d sdio block size=%d, \n", __func__, __LINE__,
+    AML_INFO("func->num %d sdio block size=%d, \n",
         func->num,  func->cur_blksize);
 
     if (func->num == 1)
@@ -183,18 +187,17 @@ int aml_sdio_probe(struct sdio_func *func, const struct sdio_device_id *id)
         g_hwif_sdio.sdio_func_if[0] = &sdio_func_0;
     }
     g_hwif_sdio.sdio_func_if[func->num] = func;
-    printk("%s(%d): func->num %d sdio_func=%p, \n", __func__, __LINE__,
-        func->num,  func);
+    AML_INFO(" func->num %d sdio_func=%p, \n", func->num,  func);
 
     sdio_release_host(func);
     sdio_set_drvdata(func, (void *)(&g_hwif_sdio));
     if (func->num != FUNCNUM_SDIO_LAST)
     {
-        printk("%s(%d):func_num=%d, last func num=%d\n", __func__, __LINE__,
+        AML_ERR("func_num=%d, last func num=%d\n",
             func->num, FUNCNUM_SDIO_LAST);
         return 0;
     }
-    printk("%s: %d, sdio probe success\n", __func__, __LINE__);
+    AML_INFO(" sdio probe success\n");
     aml_sdio_init_base_addr();
     aml_sdio_init_ops();
     g_hif_sdio_ops.hi_enable_scat(&g_hwif_sdio);
@@ -208,7 +211,7 @@ int aml_sdio_probe(struct sdio_func *func, const struct sdio_device_id *id)
     return ret;
 
 sdio_enable_error:
-    printk("sdio_enable_error:  line %d\n",__LINE__);
+    AML_ERR("sdio_enable_error:  line \n");
     sdio_release_host(func);
 
     return ret;
@@ -221,9 +224,9 @@ static void  aml_sdio_remove(struct sdio_func *func)
         return ;
     }
 
-    printk("\n==========================================\n");
-    printk("aml_sdio_remove++ func->num =%d \n",func->num);
-    printk("==========================================\n");
+    AML_INFO("\n==========================================\n");
+    AML_INFO("aml_sdio_remove++ func->num =%d \n",func->num);
+    AML_INFO("==========================================\n");
 
     sdio_claim_host(func);
     sdio_disable_func(func);
@@ -250,7 +253,7 @@ static void  aml_sdio_remove(struct sdio_func *func)
             cnt++;
             if (cnt > 40)
             {
-                printk("wifi suspend fail \n");
+                AML_ERR("wifi suspend fail \n");
                 return -1;
             }
         }
@@ -276,6 +279,7 @@ static void  aml_sdio_remove(struct sdio_func *func)
 }
 
 extern lp_shutdown_func g_lp_shutdown_func;
+extern bt_shutdown_func g_bt_shutdown_func;
 
 //The shutdown interface will be called 7 times by the driver, and msg only needs to send once
 int g_sdio_shutdown_cnt = 0;
@@ -287,8 +291,16 @@ void aml_sdio_shutdown(struct device *device)
         return;
     }
 
+    AML_INFO("aml_sdio_shutdown begin \n");
+
     //Mask interrupt reporting to the host
     atomic_set(&g_wifi_pm.is_shut_down, 2);
+
+    // Notify fw to enter shutdown mode
+    if (g_bt_shutdown_func != NULL)
+    {
+        g_bt_shutdown_func();
+    }
 
     //send msg only once
     if (g_lp_shutdown_func != NULL)
@@ -298,7 +310,7 @@ void aml_sdio_shutdown(struct device *device)
 
     //notify fw shutdown
     //notify bt wifi will go shutdown
-    aml_sdio_random_word_write(RG_AON_A55, aml_sdio_random_word_read(RG_AON_A55) | BIT(28));
+    aml_sdio_random_word_write(RG_AON_A16, aml_sdio_random_word_read(RG_AON_A16) | BIT(28));
 
     //prevrnt msg_send & reg read_write
     atomic_set(&g_wifi_pm.is_shut_down, 1);
@@ -353,21 +365,21 @@ int  aml_sdio_init(void)
     wifi_in_rmmod = 0;
     chip_en_access = 0;
     wifi_sdio_shutdown = 0;
-    printk("*****************aml sdio common driver is insmoded********************\n");
+    AML_INFO("*****************aml sdio common driver is insmoded********************\n");
     if (err)
-        printk("failed to register sdio driver: %d \n", err);
+        AML_ERR("failed to register sdio driver: %d \n", err);
 
     return err;
 }
 
 void  aml_sdio_exit(void)
 {
-    printk("aml_sdio_exit++ \n");
+    AML_INFO("aml_sdio_exit++ \n");
     sdio_unregister_driver(&aml_sdio_driver);
     g_sdio_driver_insmoded = 0;
     g_sdio_after_porbe = 0;
 
-    printk("*****************aml sdio common driver is rmmoded********************\n");
+    AML_INFO("*****************aml sdio common driver is rmmoded********************\n");
 }
 
 void aml_sdio_reset(void)
@@ -376,7 +388,7 @@ void aml_sdio_reset(void)
     int reg = 0;
     int try_count = 0;
 
-    printk("%s: ******* sdio reset begin *******\n", __func__);
+    AML_INFO("******* sdio reset begin *******\n");
 Try_again:
 #ifndef CONFIG_PT_MODE
 #ifndef CONFIG_LINUXPC_VERSION
@@ -403,13 +415,13 @@ Try_again:
         reg = g_hif_sdio_ops.hi_random_word_read(0xf0101c);
         if ((bus_state_detect.bus_err) && try_count <= 3) {
             try_count++;
-            printk("%s: *******sdio reset failed, try again(%d)", __func__, try_count);
+            AML_ERR(" *******sdio reset failed, try again(%d)", try_count);
             goto Try_again;
         }
         bus_state_detect.bus_reset_ongoing = 0;
     }
 
-    printk("%s: ******* sdio reset end *******\n", __func__);
+    AML_INFO(" ******* sdio reset end *******\n");
     return;
 #endif
 }
@@ -422,9 +434,9 @@ void set_wifi_bt_sdio_driver_bit(bool is_register, int shift)
     AML_BT_WIFI_MUTEX_ON();
     if (is_register) {
         g_sdio_wifi_bt_alive |= (1 << shift);
-        printk("Insmod %s sdio driver!\n", (shift ? "WiFi":"BT"));
+        AML_INFO("Insmod %s sdio driver!\n", (shift ? "WiFi":"BT"));
     } else {
-        printk("Rmmod %s sdio driver!\n", (shift ? "WiFi":"BT"));
+        AML_INFO("Rmmod %s sdio driver!\n", (shift ? "WiFi":"BT"));
         g_sdio_wifi_bt_alive &= ~(1 << shift);
         if (!g_sdio_wifi_bt_alive) {
             aml_sdio_exit();
@@ -441,12 +453,12 @@ int aml_sdio_insmod(void)
 #ifdef CONFIG_PT_MODE
     if (!g_sdio_is_probe) {
         aml_sdio_exit();
-        printk("%s(%d) err found! g_sdio_is_probe: %d\n",__func__, __LINE__, g_sdio_is_probe);
+        AML_ERR(" err found! g_sdio_is_probe: %d\n", g_sdio_is_probe);
         return -1;
     }
 #endif
 
-    printk("%s(%d) start...\n",__func__, __LINE__);
+    AML_INFO(" start...\n");
     return 0;
 }
 

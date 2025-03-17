@@ -24,6 +24,10 @@
 #include <linux/version.h>
 #include <net/cfg80211.h>
 #include <linux/fs.h>
+#include <linux/sched.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#include <uapi/linux/sched/types.h>     /* for struct sched_attr */
+#endif
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 41) && defined (CONFIG_AMLOGIC_KERNEL_VERSION))
 #include <linux/upstream_version.h>
@@ -558,6 +562,52 @@ static inline void SKB_APPEND(struct sk_buff *old, struct sk_buff *newsk, struct
 }
 
 /******************************************************************************
+ * Scheduler
+ *****************************************************************************/
+static inline int __aml_sched_rt_set(struct task_struct *p, int policy, int prio)
+{
+    /* convert prio of /proc/xxx/sched to rt_priority */
+    int rt_priority = MAX_RT_PRIO - 1 - prio;
+
+    BUG_ON(policy != SCHED_FIFO && policy != SCHED_RR);
+    BUG_ON(rt_priority < 0);
+
+    if (p->policy != policy || p->rt_priority != rt_priority) {
+#if 0
+        /* NB: call sched_setattr instead of a non-exported API sched_setscheduler() */
+        struct sched_param sch_param = { .sched_priority = prio, };
+
+        return sched_setscheduler(p, policy, &sch_param);
+#else
+        struct sched_attr attr = {
+            .size           = sizeof(struct sched_attr),
+            .sched_policy   = policy,
+            .sched_flags    = 0,
+            .sched_nice     = 0,
+            .sched_priority = rt_priority,
+        };
+
+        pr_notice("%15s: policy %d ==> %d, rt_priority %d ==> %d (%d)\n",
+                  p->comm, p->policy, policy, p->rt_priority, rt_priority, prio);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
+        return sched_setattr_nocheck(p, &attr);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
+#error "FIXME: no exported API sched_setattr/_nocheck()."
+#else
+        return sched_setattr(p, &attr);
+#endif
+#endif
+    }
+    return 0;
+}
+
+static inline int aml_sched_rt_set(int policy, int prio)
+{
+    return __aml_sched_rt_set(current, policy, prio);
+}
+
+/******************************************************************************
  * File
  *****************************************************************************/
 #if defined(__ANDROID_COMMON_KERNEL__) || defined(CONFIG_AML_ANDROID) || defined(CONFIG_BUILDROOT)
@@ -686,4 +736,7 @@ static inline ssize_t FILE_WRITE(struct file *file, const void *buf, size_t coun
 #endif
 }
 
+#ifdef MODULE_IMPORT_NS
+MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
+#endif
 #endif /* _AML_COMPAT_H_ */

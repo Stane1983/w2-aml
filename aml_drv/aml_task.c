@@ -70,13 +70,9 @@
 int aml_task_irqhdlr(void *data)
 {
     struct aml_hw *aml_hw = (struct aml_hw *)data;
-    struct sched_param param = {0};
     u32 status;
 
-    param.sched_priority = AML_TASK_PRI;
-#ifndef CONFIG_PT_MODE
-    sched_setscheduler(current, SCHED_FIFO, &param);
-#endif
+    aml_sched_rt_set(SCHED_FIFO, AML_TASK_PRI);
     while (!aml_hw->irqhdlr->task_quit) {
         if (down_interruptible(&aml_hw->irqhdlr->task_sem) != 0) {
             enable_irq(aml_platform_get_irq(aml_hw->plat));

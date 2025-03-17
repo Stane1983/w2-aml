@@ -8,6 +8,8 @@
  ******************************************************************************
  */
 
+#define  AML_MODULE       PLATF
+
 #include <linux/module.h>
 #include <linux/firmware.h>
 #include <linux/delay.h>
@@ -159,11 +161,11 @@ static int aml_plat_bin_fw_upload(struct aml_plat *aml_plat, u8* fw_addr,
     u32 *src, *dst;
     unsigned int i;
 
-    printk("%s:%d\n", __func__, __LINE__);
+    AML_FN_ENTRY();
 
     err = request_firmware(&fw, filename, dev);
     if (err) {
-        printk("Please check version of agcram.bin, need update to %s !!!\n", filename);
+        AML_ERR("Please check version of agcram.bin, need update to %s !!!\n", filename);
         return err;
     }
 
@@ -174,8 +176,8 @@ static int aml_plat_bin_fw_upload(struct aml_plat *aml_plat, u8* fw_addr,
     dst = (u32 *)fw_addr;
     size = (unsigned int)fw->size;
 
-    printk("%s:%d, size %d\n", __func__, __LINE__, size);
-    printk("%s:%d, src %x\n", __func__, __LINE__, *src);
+    AML_INFO(" size %d\n", size);
+    AML_INFO(" src %x\n", *src);
 
     /* check potential platform bug on multiple stores vs memcpy */
     if (aml_bus_type == USB_MODE) {
@@ -203,7 +205,7 @@ static int aml_plat_agc_download(struct aml_plat *aml_plat, u8* fw_addr)
     size = sizeof(agc_ram);
     dst = (u32 *)fw_addr;
 
-    printk("%s:%d, src addr 0x%x, size %d\n", __func__, __LINE__, fw_addr, size);
+    AML_INFO(" src addr 0x%x, size %d\n", fw_addr, size);
 
     /* check potential platform bug on multiple stores vs memcpy */
     if (aml_bus_type == USB_MODE) {
@@ -237,7 +239,7 @@ static int aml_plat_agc_download(struct aml_plat *aml_plat, u8* fw_addr)
         hex_buff[8] = 0;                                     \
         strncpy(hex_buff, (char *)src, 8);                   \
         if (kstrtouint(hex_buff, 16, &_val)) {               \
-            printk("%s:%d, goto end\n", __func__, __LINE__); \
+            AML_ERR(" goto end\n"); \
             goto end;                                        \
         }                                                    \
         src += BYTE_IN_LINE;                                 \
@@ -255,7 +257,7 @@ static int aml_plat_fw_upload(struct aml_plat *aml_plat, u8* fw_addr,
     u8 const *src;
     u32 data = 0;
 
-    printk("%s:%d, \n", __func__, __LINE__);
+    AML_FN_ENTRY();
     err = request_firmware(&fw, filename, dev);
     if (err) {
         return err;
@@ -272,13 +274,13 @@ static int aml_plat_fw_upload(struct aml_plat *aml_plat, u8* fw_addr,
         size = ICCM_ALL_LEN;
     }
 
-    printk("%s:%d iccm dst %x\n", __func__, __LINE__, dst);
-    printk("%s:%d iccm len %d\n", __func__, __LINE__, size/1024);
+    AML_INFO(" iccm dst %x\n", dst);
+    AML_INFO(" iccm len %d\n", size/1024);
     for (i = 1; i <= size / 4; i += 1) {
         IHEX_READ32(data);
         *dst = __swab32(data);
         if (*dst != __swab32(data)) {
-            printk("Download ICCM ERROR!\n");
+            AML_ERR("Download ICCM ERROR!\n");
             return -1;
         }
         dst++;
@@ -292,12 +294,12 @@ static int aml_plat_fw_upload(struct aml_plat *aml_plat, u8* fw_addr,
 #else
     dst = (u32 *)AML_ADDR(aml_plat, AML_ADDR_CPU, DCCM_RAM_ADDR);
 #endif
-    printk("%s:%d dccm dst %x, size %d\n", __func__, __LINE__, dst, size/1024);
+    AML_INFO(" dccm dst %x, size %d\n", dst, size/1024);
     for (i = 1; i <= size / 4; i += 1) {
         IHEX_READ32(data);
         *dst = __swab32(data);
         if (*dst != __swab32(data)) {
-            printk("Download DCCM ERROR!\n");
+            AML_ERR("Download DCCM ERROR!\n");
             return -1;
         }
         dst++;
@@ -306,11 +308,11 @@ static int aml_plat_fw_upload(struct aml_plat *aml_plat, u8* fw_addr,
 #if 0
     dst = (u32 *)fw_addr;
     for (i = 1; i < 50; i++)
-        printk("%s:%d iccm check addr %x data %x\n", __func__, __LINE__, dst, *dst++);
+        AML_INFO(" iccm check addr %x data %x\n", dst, *dst++);
 
     dst = (u32 *)AML_ADDR(aml_plat, AML_ADDR_CPU, DCCM_RAM_ADDR);
     for (i = 1; i < 50; i++)
-        printk("%s:%d dccm check addr %x data %x\n", __func__, __LINE__, dst, *dst++);
+        printk(" dccm check addr %x data %x\n", dst, *dst++);
 #endif
 
 end:
@@ -568,14 +570,14 @@ static void aml_plat_stop_agcfsm(struct aml_plat *aml_plat, int agc_reg,
     /* Stop state machine : xxAGCCNTL0[AGCFSMRESET]=1 */
     *agcctl = AML_REG_READ(aml_plat, AML_ADDR_SYSTEM, agc_reg);
     AML_REG_WRITE((*agcctl) | BIT(12), aml_plat, AML_ADDR_SYSTEM, agc_reg);
-    printk("%s:%d, read 0x%x, 0x%x\n", __func__, __LINE__, agc_reg, AML_REG_READ(aml_plat, AML_ADDR_SYSTEM,agc_reg));
+    AML_INFO(" read 0x%x, 0x%x\n", agc_reg, AML_REG_READ(aml_plat, AML_ADDR_SYSTEM,agc_reg));
 
     /* Force clock */
     if (agc_ver > 0) {
         /* CLKGATEFCTRL0[AGCCLKFORCE]=1 */
         AML_REG_WRITE((*memclk) | BIT(29), aml_plat, AML_ADDR_SYSTEM,
                        clkctrladdr);
-        printk("%s:%d, read 0x%x, 0x%x\n", __func__, __LINE__, clkctrladdr, AML_REG_READ(aml_plat, AML_ADDR_SYSTEM,clkctrladdr));
+        AML_INFO(" read 0x%x, 0x%x\n", clkctrladdr, AML_REG_READ(aml_plat, AML_ADDR_SYSTEM,clkctrladdr));
     } else {
         /* MEMCLKCTRL0[AGCMEMCLKCTRL]=0 */
         AML_REG_WRITE((*memclk) & ~BIT(3), aml_plat, AML_ADDR_SYSTEM,
@@ -678,7 +680,7 @@ static int aml_plat_agc_load(struct aml_plat *aml_plat)
     agc_ver = aml_plat_get_agc_load_version(aml_plat, rf, &clkctrladdr);
 
     aml_plat_stop_agcfsm(aml_plat, agc, &agcctl, &memclk, agc_ver, clkctrladdr);
-    printk("%s:%d, agc_addr %x, memclk %x, agc_ver %x, clkctrladdr %x\n", __func__, __LINE__, agc, memclk, agc_ver, clkctrladdr);
+    AML_INFO(" agc_addr %x, memclk %x, agc_ver %x, clkctrladdr %x\n", agc, memclk, agc_ver, clkctrladdr);
 
     ret = aml_plat_agc_download(aml_plat, AML_ADDR(aml_plat, AML_ADDR_SYSTEM, PHY_AGC_UCODE_ADDR));
 
@@ -896,17 +898,18 @@ int aml_platform_reset(struct aml_plat *aml_plat)
     /* the doc states that SOFT implies FPGA_B_RESET
      * adding FPGA_B_RESET is clearer */
     regval_aml = AML_REG_READ(aml_plat, AML_ADDR_SYSTEM, SYSCTRL_MISC_CNTL_ADDR);
-    printk("%s:%d, offset %x regval %x\n", __func__, __LINE__,
-           SYSCTRL_MISC_CNTL_ADDR, regval_aml);
+    AML_INFO(" offset %x regval %x\n", SYSCTRL_MISC_CNTL_ADDR, regval_aml);
     AML_REG_WRITE(SOFT_RESET | FPGA_B_RESET, aml_plat,
                    AML_ADDR_SYSTEM, SYSCTRL_MISC_CNTL_ADDR);
 
-    regval_cpu = AML_REG_READ(aml_plat, AML_ADDR_AON, RG_PMU_A22);
-    regval_cpu |= CPU_RESET;
-    AML_REG_WRITE(regval_cpu, aml_plat, AML_ADDR_AON, RG_PMU_A22);
+    if (aml_bus_type != USB_MODE) {
+        regval_cpu = AML_REG_READ(aml_plat, AML_ADDR_AON, RG_PMU_A22);
+        regval_cpu |= CPU_RESET;
+        AML_REG_WRITE(regval_cpu, aml_plat, AML_ADDR_AON, RG_PMU_A22);
+    }
 
     regval_status = AML_REG_READ(aml_plat, AML_ADDR_AON, RG_PMU_A16);
-    printk("%s:%d before regval_status:%x\n", __func__, __LINE__, regval_status);
+    AML_INFO(" before regval_status:%x\n", regval_status);
     regval_status &= ~BIT(30);
     regval_status &= ~BIT(31);
     AML_REG_WRITE(regval_status, aml_plat, AML_ADDR_AON, RG_PMU_A16);
@@ -916,7 +919,7 @@ int aml_platform_reset(struct aml_plat *aml_plat)
     regval_aml = AML_REG_READ(aml_plat, AML_ADDR_SYSTEM, SYSCTRL_MISC_CNTL_ADDR);
     regval_cpu = AML_REG_READ(aml_plat, AML_ADDR_AON, RG_PMU_A22);
     regval_status = AML_REG_READ(aml_plat, AML_ADDR_AON, RG_PMU_A16);
-    printk("%s:%d regval_aml:%x, regval_cpu:%x, regval_status:%x\n", __func__, __LINE__, regval_aml, regval_cpu, regval_status);
+    AML_INFO(" regval_aml:%x, regval_cpu:%x, regval_status:%x\n", regval_aml, regval_cpu, regval_status);
 
     if ((regval_aml & SOFT_RESET) || (!(regval_cpu & CPU_RESET))) {
         AML_INFO("reset: failed\n");
@@ -925,7 +928,7 @@ int aml_platform_reset(struct aml_plat *aml_plat)
 
     AML_REG_WRITE(regval_aml & ~FPGA_B_RESET, aml_plat,
                    AML_ADDR_SYSTEM, SYSCTRL_MISC_CNTL_ADDR);
-    printk("%s:%d\n", __func__, __LINE__);
+    AML_FN_EXIT();
     mdelay(10);
     return 0;
 }
@@ -1008,7 +1011,7 @@ int aml_usb_check_fw_compatibility(struct aml_hw *aml_hw)
 
     shared = (struct ipc_shared_env_tag *)kzalloc(sizeof(struct ipc_shared_env_tag), GFP_KERNEL);
     if (!shared) {
-        printk("%s: %d, alloc shared failed!\n", __FILE__, __LINE__);
+        AML_ERR(" alloc shared failed!\n");
         return -ENOMEM;
     }
 
@@ -1152,7 +1155,7 @@ int aml_sdio_check_fw_compatibility(struct aml_hw *aml_hw)
 
     shared = (struct ipc_shared_env_tag *)kzalloc(sizeof(struct ipc_shared_env_tag), GFP_KERNEL);
     if (!shared) {
-        printk("%s: %d, alloc shared failed!\n", __FILE__, __LINE__);
+        AML_ERR(" alloc shared failed!\n");
         return -ENOMEM;
     }
 
@@ -1495,12 +1498,12 @@ unsigned int bbpll_start(struct aml_plat *aml_plat)
     rg_dpll_a6.data = AML_REG_READ(aml_plat, AML_ADDR_AON, RG_DPLL_A6);
     if (rg_dpll_a6.b.ro_bbpll_done == 1)
     {
-        printk("bbpll done !\n");
+        AML_INFO("bbpll done !\n");
         return 1;
     }
     else
     {
-        printk("bbpll start failed !\n");
+        AML_ERR("bbpll start failed !\n");
         return 0;
     }
 }
@@ -1534,14 +1537,9 @@ void aml_tx_rx_buf_init(struct aml_hw *aml_hw)
 
     if (aml_bus_type != PCIE_MODE) {
         aml_hw->fw_buf_pos = RXBUF_START_ADDR;
-        aml_hw->last_fw_pos = RXBUF_START_ADDR;
-        if (aml_bus_type == SDIO_MODE) {
-            aml_hw->rx_buf_end = RXBUF_END_ADDR_LARGE;
-            aml_hw->rx_buf_len = RX_BUFFER_LEN_LARGE;
-        } else {
-            aml_hw->rx_buf_end = USB_RXBUF_END_ADDR_LARGE;
-            aml_hw->rx_buf_len = USB_RX_BUFFER_LEN_LARGE;
-        }
+        aml_hw->rx_buf_end =
+                (aml_bus_type == SDIO_MODE) ?
+                        RXBUF_END_ADDR_LARGE : USB_RXBUF_END_ADDR_LARGE;
         aml_hw->rx_buf_state = FW_BUFFER_EXPAND;
     } else {
         for (i = 0; i < 1024; i += 4) {
@@ -1553,38 +1551,28 @@ void aml_tx_rx_buf_init(struct aml_hw *aml_hw)
     }
 }
 
-void usb_stor_control_msg(struct aml_hw *aml_hw, struct urb *urb)
+/* FIXME: move aml_usb_irq_urb_init() into w2_usb.c */
+void aml_usb_irq_urb_init(struct aml_hw *aml_hw, struct usb_device *udev)
 {
-    int ret;
-    struct usb_device *udev = aml_hw->plat->usb_dev;
+    struct urb *urb = &aml_hw->usb->urb;
+    struct usb_ctrlrequest *req = &aml_hw->usb->req;
 
     /* fill in the devrequest structure */
-    aml_hw->g_cr->bRequestType = USB_CTRL_IN_REQTYPE;
-    aml_hw->g_cr->bRequest = CMD_USB_IRQ;
-    aml_hw->g_cr->wValue = 0;
-    aml_hw->g_cr->wIndex = 0;
-    aml_hw->g_cr->wLength = cpu_to_le16(4 * sizeof(int));
+    req->bRequestType = USB_CTRL_IN_REQTYPE;
+    req->bRequest = CMD_USB_IRQ;
+    req->wValue = 0;
+    req->wIndex = 0;
+    req->wLength = cpu_to_le16(sizeof(aml_hw->usb->fw_ptrs));
 
-    /*fill a control urb*/
     usb_fill_control_urb(urb,
         udev,
         usb_rcvctrlpipe(udev, USB_EP0),
-        (unsigned char *)(aml_hw->g_cr),
-        aml_hw->g_buffer,
-        4 * sizeof(int),
+        (unsigned char *)req,
+        aml_hw->usb->fw_ptrs,
+        sizeof(aml_hw->usb->fw_ptrs),
         aml_irq_usb_hdlr,
         aml_hw);
-
-    /*submit urb*/
-    USB_BEGIN_LOCK();
-    ret = usb_submit_urb(urb, GFP_ATOMIC);
-    USB_END_LOCK();
-    if (ret < 0) {
-        ERROR_DEBUG_OUT("usb_submit_urb failed %d\n", ret);
-    }
 }
-
-
 
 int aml_sdio_create_thread(struct aml_hw *aml_hw)
 {
@@ -1600,7 +1588,7 @@ int aml_sdio_create_thread(struct aml_hw *aml_hw)
     sema_init(&aml_hw->aml_rx_sem, 0);
     aml_hw->aml_rx_task_quit = 0;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)))
         aml_hw->aml_rx_task = kthread_run(aml_rx_task, aml_hw, "aml_rx_task");
         if (IS_ERR(aml_hw->aml_rx_task)) {
             kthread_stop(aml_hw->aml_irq_task);
@@ -1715,50 +1703,34 @@ void aml_sdio_destroy_thread(struct aml_hw *aml_hw)
     }
 }
 
-
-
-int aml_cpufreq_boost_request(struct aml_hw *aml_hw)
-{
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
-
-    struct cpufreq_policy *policy;
-    int ret;
-
-    policy = cpufreq_cpu_get(0);
-    if (IS_ERR_OR_NULL(policy)) {
-        pr_err("cpu0 policy not ready\n");
-        return -EINVAL;
-    }
-
-    aml_hw->qos_req = kcalloc(1, sizeof(*aml_hw->qos_req), GFP_KERNEL);
-    if (!aml_hw->qos_req) {
-        ret = -ENOMEM;
-        return ret;
-    }
-
-    ret = freq_qos_add_request(&policy->constraints, aml_hw->qos_req, FREQ_QOS_MIN,
-                   FREQ_QOS_MIN_DEFAULT_VALUE);
-    if (ret < 0) {
-        printk("Failed to add max-freq constraint (%d)\n", ret);
-        kfree(aml_hw->qos_req);
-        return ret;
-    }
-
-    cpufreq_cpu_put(policy);
-#endif
-    return 0;
-
-}
-
 int aml_cpufreq_boost_update(struct aml_hw *aml_hw)
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+    struct freq_qos_request *req = &aml_hw->qos_req;
     int ret = 0;
-    aml_cpufreq_boost_request(aml_hw);
-    aml_hw->min_cpu_freq = cpufreq_quick_get_max(0);
-    ret = freq_qos_update_request(aml_hw->qos_req, aml_hw->min_cpu_freq);
-    if (ret < 0)
-        return ret;
+
+    if (!freq_qos_request_active(req)) {
+        struct cpufreq_policy *policy = cpufreq_cpu_get(0);
+
+        if (IS_ERR_OR_NULL(policy)) {
+            AML_ERR("cpu0 policy not ready\n");
+            return -EINVAL;
+        }
+
+        ret = freq_qos_add_request(&policy->constraints, req, FREQ_QOS_MIN,
+                       FREQ_QOS_MIN_DEFAULT_VALUE);
+        if (ret)
+            AML_ERR("Failed to add max-freq constraint (%d)\n", ret);
+
+        cpufreq_cpu_put(policy);
+    }
+
+    if (freq_qos_request_active(req)) {
+        ret = freq_qos_update_request(req, cpufreq_quick_get_max(0));
+        if (ret < 0)
+            AML_ERR("freq_qos_update_request fail(%d)\n", ret);
+    }
+    return ret;
 #endif
     return 0;
 }
@@ -1766,13 +1738,13 @@ int aml_cpufreq_boost_update(struct aml_hw *aml_hw)
 int aml_cpufreq_boost_remove(struct aml_hw *aml_hw)
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
-    freq_qos_remove_request(aml_hw->qos_req);
-    kfree(aml_hw->qos_req);
+    struct freq_qos_request *req = &aml_hw->qos_req;
+
+    if (freq_qos_request_active(req))
+        freq_qos_remove_request(req);
 #endif
     return 0;
 }
-
-
 
 extern int coex_flag;
 int aml_sdio_platform_on(struct aml_hw *aml_hw, void *config)
@@ -1806,9 +1778,9 @@ int aml_sdio_platform_on(struct aml_hw *aml_hw, void *config)
         return -1;
     }
 #endif
-        printk("bbpll init ok!\n");
+        AML_INFO("bbpll init ok!\n");
     } else {
-        printk("bbpll already init,not need to init!\n");
+        AML_INFO("bbpll already init,not need to init!\n");
     }
 
     //change cpu clock to 240M
@@ -1818,7 +1790,8 @@ int aml_sdio_platform_on(struct aml_hw *aml_hw, void *config)
     mac_clk_reg |= 0x30000;
     AML_REG_WRITE(mac_clk_reg, aml_plat, AML_ADDR_MAC_PHY, RG_INTF_MACCORE_CLK);
     aml_tx_rx_buf_init(aml_hw);
-
+    aml_hw->dynabuf_stop_tx = 0;
+    aml_hw->send_tx_stop_to_fw = 0;
     if (aml_platform_reset(aml_plat))
         return -1;
 
@@ -1865,7 +1838,7 @@ int aml_sdio_platform_on(struct aml_hw *aml_hw, void *config)
             static int wait_cnt = 0;
             wait_cnt++;
             if (wait_cnt > 200) {
-                printk("error found! start FW fail!\n");
+                AML_ERR("error found! start FW fail!\n");
                 wait_cnt = 0;
                 return -1;
             }
@@ -1901,33 +1874,19 @@ int aml_sdio_platform_on(struct aml_hw *aml_hw, void *config)
     }
 #endif
     if (aml_bus_type == USB_MODE) {
-        aml_hw->g_buffer = ZMALLOC(4 * sizeof(int), "fw_stat", GFP_DMA | GFP_ATOMIC);
-        if (!aml_hw->g_buffer) {
-            ERROR_DEBUG_OUT("malloc fail!\n");
+        aml_hw->usb = kzalloc(sizeof(*aml_hw->usb), GFP_DMA | GFP_ATOMIC);
+        if (!aml_hw->usb) {
+            AML_ERR("aml_hw->usb malloc fail!\n");
             return -ENOMEM;
         }
 
-        aml_hw->g_cr = ZMALLOC(sizeof(struct usb_ctrlrequest), "fw_stat", GFP_DMA | GFP_ATOMIC);
-        if (!aml_hw->g_cr) {
-            FREE(aml_hw->g_buffer, "fw_stat");
-            ERROR_DEBUG_OUT("malloc fail!\n");
-            return -ENOMEM;
-        }
-
-        aml_hw->g_urb = usb_alloc_urb(0, GFP_ATOMIC);
-        if (!aml_hw->g_urb) {
-            FREE(aml_hw->g_buffer, "fw_stat");
-            FREE(aml_hw->g_cr, "fw_stat");
-            ERROR_DEBUG_OUT("error, no urb!\n");
-            return -ENOMEM;
-        }
+        usb_init_urb(&aml_hw->usb->urb);
     }
 
     if (aml_sdio_create_thread(aml_hw)) {
-        if (aml_bus_type == USB_MODE) {
-            FREE(aml_hw->g_buffer, "fw_stat");
-            FREE(aml_hw->g_cr, "fw_stat");
-            usb_free_urb(aml_hw->g_urb);
+        if (aml_hw->usb) {
+            usb_free_urb(&aml_hw->usb->urb);
+            aml_hw->usb = NULL;
         }
         aml_sdio_destroy_thread(aml_hw);
         if (aml_hw->plat->disable)
@@ -1974,7 +1933,8 @@ int aml_sdio_platform_on(struct aml_hw *aml_hw, void *config)
     }
     if (aml_bus_type == USB_MODE) {
         aml_hw->plat->usb_dev = g_udev;
-        usb_stor_control_msg(aml_hw, aml_hw->g_urb);
+        aml_usb_irq_urb_init(aml_hw, g_udev);
+        aml_usb_irq_urb_submit(aml_hw);
         aml_hw->g_tx_param.tx_page_free_num = USB_TX_PAGE_NUM_SMALL;
         aml_hw->g_tx_param.tx_page_tot_num = USB_TX_PAGE_NUM_SMALL;
         aml_hw->trb_wait_time = USB_SEND_URB_DEFAULT_WAIT_TIME;
@@ -1987,7 +1947,7 @@ int aml_sdio_platform_on(struct aml_hw *aml_hw, void *config)
     aml_scatter_req_init(aml_hw);
 
     aml_tcp_delay_ack_init(aml_hw);
-    printk("%s %d end\n", __func__, __LINE__);
+    AML_INFO("end\n");
     return 0;
 }
 
@@ -1995,14 +1955,11 @@ int aml_sdio_platform_on(struct aml_hw *aml_hw, void *config)
 int aml_prealloc_rxbuf_task(void *data)
 {
     struct aml_hw *aml_hw = (struct aml_hw *)data;
-    struct sched_param sparam;
     struct aml_prealloc_rxbuf *prealloc_rxbuf = NULL;
     struct sk_buff *skb = NULL;
     uint32_t i = 0;
 
-    sparam.sched_priority = 91;
-    sched_setscheduler(current, SCHED_RR, &sparam);
-
+    aml_sched_rt_set(SCHED_RR, AML_TASK_PRI);
     while (!aml_hw->prealloc_task_quit) {
         if (down_interruptible(&aml_hw->prealloc_rxbuf_sem) != 0) {
             AML_INFO("prealloc: wait semaphore failed");
@@ -2105,9 +2062,9 @@ int aml_pci_platform_on(struct aml_hw *aml_hw, void *config)
     if (rg_dpll_a6.b.ro_bbpll_done != 1) {
         bbpll_init(aml_plat);
         bbpll_start(aml_plat);
-        printk("bbpll init ok!\n");
+        AML_INFO("bbpll init ok!\n");
     } else {
-        printk("bbpll already init,not need to init!\n");
+        AML_INFO("bbpll already init,not need to init!\n");
     }
 
     //change cpu clock to 240M
@@ -2122,7 +2079,7 @@ int aml_pci_platform_on(struct aml_hw *aml_hw, void *config)
     temp_data |= 0x6;
     AML_REG_WRITE(temp_data, aml_plat, AML_ADDR_MAC_PHY, MAC_AHBABT_CONTROL1);
 
-    printk("%s:%d, reg:0x00a07028's value %x, reg:0x00a0702c's value %x", __func__, __LINE__,
+    AML_INFO(" reg:0x00a07028's value %x, reg:0x00a0702c's value %x",
            AML_REG_READ(aml_plat, AML_ADDR_MAC_PHY, MAC_AHBABT_CONTROL0),
            AML_REG_READ(aml_plat, AML_ADDR_MAC_PHY, MAC_AHBABT_CONTROL1));
 
@@ -2211,7 +2168,6 @@ int aml_pci_platform_on(struct aml_hw *aml_hw, void *config)
 #else
     aml_hw->tsq = 0;
 #endif
-
     aml_plat->enabled = true;
     aml_tcp_delay_ack_init(aml_hw);
 
@@ -2282,20 +2238,13 @@ void aml_platform_off(struct aml_hw *aml_hw, void **config)
         aml_hw->host_buf = NULL;
         aml_txbuf_list_deinit(aml_hw);
 #ifndef CONFIG_AML_PREALLOC_BUF_STATIC
-            aml_amsdu_buf_list_deinit(aml_hw);
+        aml_amsdu_buf_list_deinit(aml_hw);
 #endif
     }
-    if (aml_bus_type == USB_MODE) {
-        if (aml_hw->g_buffer) {
-            FREE(aml_hw->g_buffer, "fw_stat");
-        }
-        if (aml_hw->g_cr) {
-            FREE(aml_hw->g_cr, "fw_stat");
-        }
-        if (aml_hw->g_urb) {
-            usb_kill_urb(aml_hw->g_urb);
-            usb_free_urb(aml_hw->g_urb);
-        }
+    if (aml_hw->usb) {
+        usb_kill_urb(&aml_hw->usb->urb);
+        usb_free_urb(&aml_hw->usb->urb);
+        aml_hw->usb = NULL;
     }
     aml_hw->plat->enabled = false;
 }
@@ -2359,53 +2308,96 @@ static unsigned char *aml_get_address(struct aml_plat *aml_plat, int addr_name,
 
     return addr;
 }
-extern int bt_wt_ptr;
-extern int bt_rd_ptr;
+
+static inline int aml_hw_fw_rx_pos_update(struct aml_hw *aml_hw, u32 fw_rx_pos)
+{
+    unsigned int buf_state = fw_rx_pos & FW_BUFFER_STATUS;
+    u32 fw_pos = SHARED_MEM_BASE_ADDR + (fw_rx_pos & ~(FW_BUFFER_STATUS | RX_WRAP_TEMP_FLAG));
+
+    if (fw_rx_pos == 0)
+        return 0;
+
+    if (fw_pos < RXBUF_START_ADDR || fw_pos >= 0x60080000) {
+        AML_ERR("fw_rx_pos %x fw_pos %x\n", fw_rx_pos, fw_pos);
+        /* WARN_ON(1); */
+        return -1;
+    }
+
+    aml_hw->fw_new_pos = fw_pos;
+    if (fw_rx_pos & RX_WRAP_TEMP_FLAG)
+        aml_hw->fw_new_pos |= RX_WRAP_FLAG;
+
+    if (buf_state) {
+        aml_hw->rx_buf_state &= ~FW_BUFFER_STATUS;
+        if (buf_state & FW_BUFFER_NARROW) {
+            aml_hw->rx_buf_state |= buf_state | BUFFER_NARROW;
+        } else {
+            aml_hw->rx_buf_state |= buf_state | BUFFER_EXPAND;
+        }
+    }
+    return 0;
+}
+
+static u32 aml_usb_ack_irq(struct aml_hw *aml_hw)
+{
+    u32 fw_rx_pos = 0;
+    u32 istatus = 0;
+
+    if (bus_state_detect.bus_err)
+        return 0;
+
+    fw_rx_pos = __le32_to_cpu(aml_hw->usb->fw_ptrs[0]);
+    istatus = __le32_to_cpu(aml_hw->usb->fw_ptrs[1]);
+
+    /* reset the cache of interrupt status to prevent the caller dead-loop */
+    aml_hw->usb->fw_ptrs[1] = 0;
+
+    if (aml_hw_fw_rx_pos_update(aml_hw, fw_rx_pos))
+        return 0;
+
+    return istatus;
+}
+
+int aml_sdio_intr_read(struct aml_hw *aml_hw, u32 *fw_rx_pos, u32 *istatus)
+{
+    u32 regs[2] = { 0 };
+
+    /* FIXME: return -1 if read failed */
+    aml_hw->plat->hif_sdio_ops->hi_desc_read(regs,
+            (unsigned char *)RG_WIFI_IF_FW2HST_IRQ_CFG, sizeof(regs));
+
+    if (fw_rx_pos)
+        *fw_rx_pos = regs[0];
+    if (istatus)
+        *istatus = regs[1];
+
+    return 0;
+}
+
+static u32 aml_sdio_ack_irq(struct aml_hw *aml_hw)
+{
+    u32 fw_rx_pos = 0;
+    u32 istatus = 0;
+    int ret;
+
+    if (bus_state_detect.bus_err)
+        return 0;
+
+    ret = aml_sdio_intr_read(aml_hw, &fw_rx_pos, &istatus);
+    if (ret || aml_hw_fw_rx_pos_update(aml_hw, fw_rx_pos))
+        return 0;
+
+    return istatus;
+}
 
 static u32 aml_pci_ack_irq(struct aml_hw *aml_hw)
 {
-    unsigned int reg_val[2] = {0};
-    unsigned int buf_state = 0;
+    u32 istatus = AML_REG_READ(aml_hw->plat, AML_ADDR_MAC_PHY, ISTATUS_HOST);
 
-    if ((aml_bus_type != PCIE_MODE) && bus_state_detect.bus_err) {
-        return 0;
-    }
+    // clean pci irq status
+    AML_REG_WRITE(istatus, aml_hw->plat, AML_ADDR_MAC_PHY, ISTATUS_HOST);
 
-    if (aml_bus_type == USB_MODE) {
-        reg_val[0] = (aml_hw->g_buffer[3] << 24) | (aml_hw->g_buffer[2] << 16) | (aml_hw->g_buffer[1] << 8) | (aml_hw->g_buffer[0]);
-        reg_val[1] = (aml_hw->g_buffer[7] << 24) | (aml_hw->g_buffer[6] << 16) | (aml_hw->g_buffer[5] << 8) | (aml_hw->g_buffer[4]);
-        bt_rd_ptr = (aml_hw->g_buffer[11] << 24) | (aml_hw->g_buffer[10] << 16) | (aml_hw->g_buffer[9] << 8) | (aml_hw->g_buffer[8]);
-        bt_wt_ptr = (aml_hw->g_buffer[15] << 24) | (aml_hw->g_buffer[14] << 16) | (aml_hw->g_buffer[13] << 8) | (aml_hw->g_buffer[12]);
-        memset(aml_hw->g_buffer, 0, 4 * sizeof(int));
-    } else if (aml_bus_type == SDIO_MODE) {
-        aml_hw->plat->hif_sdio_ops->hi_desc_read((unsigned char *)(unsigned long)reg_val,
-                (unsigned char *)(unsigned long)RG_WIFI_IF_FW2HST_IRQ_CFG, sizeof(reg_val));
-    } else {
-       reg_val[1] = AML_REG_READ(aml_hw->plat, AML_ADDR_MAC_PHY, ISTATUS_HOST);
-       // clean pci irq status
-       AML_REG_WRITE(reg_val[1], aml_hw->plat, AML_ADDR_MAC_PHY, ISTATUS_HOST);
-    }
-
-    if (aml_bus_type != PCIE_MODE) {
-        buf_state = reg_val[0] & FW_BUFFER_STATUS;
-        if (buf_state) {
-            aml_hw->rx_buf_state &= ~FW_BUFFER_STATUS;
-            if (buf_state & FW_BUFFER_NARROW) {
-                aml_hw->rx_buf_state |= buf_state | BUFFER_NARROW;
-            } else {
-                aml_hw->rx_buf_state |= buf_state | BUFFER_EXPAND;
-            }
-        }
-        reg_val[0] &= ~FW_BUFFER_STATUS;
-
-        if (reg_val[0] & RX_WRAP_TEMP_FLAG) {
-            reg_val[0] |= RX_WRAP_FLAG;
-            reg_val[0] &= ~RX_WRAP_TEMP_FLAG;
-        }
-        aml_hw->fw_new_pos = (reg_val[0] + SHARED_MEM_BASE_ADDR);
-    }
-
-    return reg_val[1];
+    return istatus;
 }
 
 int aml_platform_register_usb_drv(void)
@@ -2426,21 +2418,19 @@ int aml_platform_register_usb_drv(void)
     if (!aml_plat)
         return -ENOMEM;
 
-    printk("%s:%d \n", __func__, __LINE__);
+    AML_FN_ENTRY();
 
     aml_plat->usb_dev = g_udev;
     aml_plat->hif_ops = &g_auc_hif_ops;
 
     ipc_basic_address = (u8 *)IPC_BASIC_ADDRESS;
     aml_plat->get_address = aml_get_address;
-    aml_plat->ack_irq = aml_pci_ack_irq;
+    aml_plat->ack_irq = aml_usb_ack_irq;
 
     aml_platform_init(aml_plat, &drv_data);
     dev_set_drvdata(&aml_plat->usb_dev->dev, drv_data);
     bus_state_detect.is_drv_load_finished = 1;
-#ifdef CONFIG_AML_DEBUGFS
     aml_log_nl_init();
-#endif
     return ret;
 }
 
@@ -2450,9 +2440,7 @@ void aml_platform_unregister_usb_drv(void)
     struct aml_plat *aml_plat;
 
     AML_DBG(AML_FN_ENTRY_STR);
-#ifdef CONFIG_AML_DEBUGFS
     aml_log_nl_destroy();
-#endif
     aml_hw = dev_get_drvdata(&g_udev->dev);
     if (aml_hw == NULL)
         goto err_drvdata;
@@ -2485,14 +2473,14 @@ static int aml_pci_platform_enable(struct aml_hw *aml_hw)
         sdio_claim_host(func);
         sdio_claim_irq(func, aml_irq_sdio_hdlr_for_pt);
         sdio_release_host(func);
-        printk("%s(%d) claim_irq ret=%d\n",__func__,__LINE__, ret);
+        AML_INFO(" claim_irq ret=%d\n", ret);
 #else
 #ifndef CONFIG_LINUXPC_VERSION
         aml_hw->irq = wifi_irq_num();
         irq_flag = IORESOURCE_IRQ | IORESOURCE_IRQ_LOWLEVEL | IORESOURCE_IRQ_SHAREABLE;
-        printk("%s(%d) irq_flag=0x%x  irq=%d\n", __func__, __LINE__, irq_flag,  aml_hw->irq);
+        AML_INFO(" irq_flag=0x%x  irq=%d\n", irq_flag,  aml_hw->irq);
         ret = request_irq(aml_hw->irq, aml_irq_sdio_hdlr, irq_flag, "aml", aml_hw);
-        printk("%s(%d) request_irq ret=%d\n",__func__,__LINE__, ret);
+        AML_INFO(" request_irq ret=%d\n", ret);
 #endif
 #endif
     } else if (aml_bus_type == PCIE_MODE) {
@@ -2546,7 +2534,7 @@ int aml_platform_register_sdio_drv(void)
 
     aml_plat->enable = aml_pci_platform_enable;
     aml_plat->disable = aml_pci_platform_disable;
-    aml_plat->ack_irq = aml_pci_ack_irq;
+    aml_plat->ack_irq = aml_sdio_ack_irq;
 
     aml_plat->dev = &func->dev;
     aml_plat->hif_sdio_ops = &g_hif_sdio_ops;
@@ -2573,9 +2561,7 @@ int aml_platform_register_sdio_drv(void)
     g_mmc_misc = kmalloc(sizeof(struct mmc_misc) * RXDESC_CNT_READ_ONCE, GFP_ATOMIC);
 #endif
     bus_state_detect.is_drv_load_finished = 1;
-#ifdef CONFIG_AML_DEBUGFS
     aml_log_nl_init();
-#endif
 
     return ret;
 }
@@ -2587,9 +2573,7 @@ void aml_platform_unregister_sdio_drv(void)
     struct sdio_func *func = aml_priv_to_func(SDIO_FUNC7);
 
     AML_DBG(AML_FN_ENTRY_STR);
-#ifdef CONFIG_AML_DEBUGFS
     aml_log_nl_destroy();
-#endif
     aml_hw = dev_get_drvdata(&func->dev);
     if (aml_hw == NULL)
         goto err_drvdata;
@@ -2641,7 +2625,7 @@ u8* aml_pci_get_map_address(struct net_device *dev, unsigned int offset)
         return ( aml_pci->pci_bar5_vaddr + (offset - 0x60800000));
 
     } else {
-        printk("offset error \n");
+        AML_ERR("offset error \n");
         return NULL;
     }
 #else
@@ -2720,7 +2704,7 @@ u8* aml_pci_get_map_address(struct net_device *dev, unsigned int offset)
         return aml_pci->pci_bar4_vaddr + PCIE_BAR4_TABLE7_OFFSET + (offset - PCIE_BAR4_TABLE7_EP_BASE_ADDR);
     }
 
-    printk("offset error \n");
+    AML_ERR("offset error \n");
     return NULL;
 #endif
 }
@@ -2740,35 +2724,35 @@ static u8* aml_pci_get_address(struct aml_plat *aml_plat, int addr_name,
 
     if (addr_name == AML_ADDR_CPU) //0x00000000-0x0007ffff (ICCM)
     {
-        printk("%s:%d, address %x\n", __func__, __LINE__, aml_pci->pci_bar4_vaddr + offset);
+        AML_INFO(" address %x\n", aml_pci->pci_bar4_vaddr + offset);
         return aml_pci->pci_bar4_vaddr + offset;
     }
     else if (addr_name == AML_ADDR_MAC_PHY) //0x00a00000-0x00afffff
     {
-        printk("%s:%d, address %x\n", __func__, __LINE__, aml_pci->pci_bar3_vaddr + offset);
+        AML_INFO(" address %x\n", aml_pci->pci_bar3_vaddr + offset);
         return aml_pci->pci_bar3_vaddr + offset - 0x00a00000;
     }
     else if (addr_name == AML_ADDR_AON)// 0x00c00000 - 0x00ffffff (AON & DCCM)
     {
-        printk("%s:%d, address %x\n", __func__, __LINE__, aml_pci->pci_bar2_vaddr + offset);
+        AML_INFO(" address %x\n", aml_pci->pci_bar2_vaddr + offset);
         return aml_pci->pci_bar2_vaddr + offset - 0x00c00000;
     }
     else if (addr_name == AML_ADDR_SYSTEM)
     {
         if (offset >= IPC_REG_BASE_ADDR)
         {
-            printk("%s:%d, bar5 %x, address %x\n", __func__, __LINE__, aml_pci->pci_bar5_vaddr, aml_pci->pci_bar5_vaddr + offset - IPC_REG_BASE_ADDR);
+            AML_INFO(" bar5 %x, address %x\n", aml_pci->pci_bar5_vaddr, aml_pci->pci_bar5_vaddr + offset - IPC_REG_BASE_ADDR);
             return aml_pci->pci_bar5_vaddr + offset - IPC_REG_BASE_ADDR;
         }
         else
         {
-            printk("%s:%d, address %x\n", __func__, __LINE__, aml_pci->pci_bar0_vaddr + offset);
+            AML_INFO(" address %x\n", aml_pci->pci_bar0_vaddr + offset);
             return aml_pci->pci_bar0_vaddr + offset;
         }
     }
     else
     {
-        printk("%s:%d, error addr_name\n", __func__,__LINE__);
+        AML_ERR(" error addr_name\n");
         return NULL;
     }
 
@@ -2800,7 +2784,7 @@ static u8* aml_pci_get_address(struct aml_plat *aml_plat, int addr_name,
         }
     }
 
-    printk("%s:%d, addr(0x%x) or addr_name(0x%x) err\n", __func__,__LINE__, offset, addr_name);
+    AML_INFO(" addr(0x%x) or addr_name(0x%x) err\n", offset, addr_name);
     return NULL;
 
 #endif //CONFIG_AML_FPGA_PCIE
@@ -2841,7 +2825,7 @@ static int aml_pci_get_config_reg(struct aml_plat *aml_plat, const u32 **list)
 static int wifi_reboot_fn(struct notifier_block *nb, unsigned long action, void *data)
 {
     g_pci_msg_suspend = 1;
-    printk("%s action: %d =====>\n", __func__, action);
+    AML_INFO(" action: %d =====>\n", action);
     return NOTIFY_OK;
 }
 
@@ -2857,7 +2841,7 @@ int aml_platform_register_pcie_drv(void)
     int ret = 0;
     struct aml_plat *aml_plat = NULL;
     void *drv_data = NULL;
-    printk("%s,%d, g_pci_driver_insmoded=%d\n", __func__, __LINE__, g_pci_driver_insmoded);
+    AML_INFO(" g_pci_driver_insmoded=%d\n", g_pci_driver_insmoded);
 
     if (!g_pci_driver_insmoded) {
         aml_pci_insmod();
@@ -2904,19 +2888,19 @@ void aml_platform_unregister_pcie_drv(void)
 
     aml_platform_deinit(aml_hw);
     kfree(aml_plat);
-    printk("%s,%d\n", __func__, __LINE__);
+    AML_FN_EXIT();
     pci_set_drvdata(g_pci_dev, NULL);
     unregister_reboot_notifier(&wifinotifier);
 }
 
 void aml_get_vid(struct aml_plat *aml_plat)
 {
-    printk("%s:%d, vendor_id : %x", __func__, __LINE__, readl(aml_plat->get_address(aml_plat, AML_ADDR_MAC_PHY, REG_OF_VENDOR_ID)));
+    AML_INFO("vendor_id : %x", readl(aml_plat->get_address(aml_plat, AML_ADDR_MAC_PHY, REG_OF_VENDOR_ID)));
     while (!(AML_REG_READ(aml_plat, AML_ADDR_MAC_PHY, REG_OF_VENDOR_ID) == W2p_VENDOR_AMLOGIC_EFUSE))
     {
         msleep(10);
     }
-    printk("%s:%d, vendor_id : %x", __func__, __LINE__, readl(aml_plat->get_address(aml_plat, AML_ADDR_MAC_PHY, REG_OF_VENDOR_ID)));
+    AML_INFO("vendor_id : %x", readl(aml_plat->get_address(aml_plat, AML_ADDR_MAC_PHY, REG_OF_VENDOR_ID)));
 }
 
 

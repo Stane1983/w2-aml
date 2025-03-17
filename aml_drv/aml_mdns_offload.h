@@ -160,7 +160,7 @@ static inline char *__mdnsOffload_decode_qname(unsigned char *buf,
         goto err;
     qname = (char *)kmalloc(256, GFP_KERNEL);
     if (!qname) {
-        printk("mdnsOffload: alloc failed!\n");
+        AML_ERR("mdnsOffload: alloc failed!\n");
         return NULL;
     }
     memset(qname, 0, 256);
@@ -202,7 +202,7 @@ static inline void __mdnsOffload_dump_msg(unsigned char *buf,
 
     dump = (unsigned char *)kmalloc(256, GFP_KERNEL);
     if (!dump) {
-        printk("mdnsOffload: alloc failed!\n");
+        AML_ERR("mdnsOffload: alloc failed!\n");
         return;
     }
     for (i = 0; i < len; i++) {
@@ -225,7 +225,7 @@ static inline void __mdnsOffload_dump_msg(unsigned char *buf,
             else
                 n += sprintf(dump + n, ".");
         }
-        printk("%s\n", dump);
+        AML_INFO("%s\n", dump);
         i = i + line - 1;
     }
     kfree(dump);
@@ -241,7 +241,7 @@ static inline int __mdnsOffload_send_vendor_cmd_reply(struct wiphy *wiphy,
 
     skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, len);
     if (unlikely(!skb)) {
-        printk("skb alloc failed!\n");
+        AML_ERR("skb alloc failed!\n");
         err = -ENOMEM;
         goto exit;
     }
@@ -250,7 +250,7 @@ static inline int __mdnsOffload_send_vendor_cmd_reply(struct wiphy *wiphy,
     nla_put(skb, NL80211_ATTR_VENDOR_DATA, len, data);
     err = cfg80211_vendor_cmd_reply(skb);
     if (err)
-        printk("cfg80211_vendor_cmd_reply failed!ret=%d\n", err);
+        AML_ERR("cfg80211_vendor_cmd_reply failed!ret=%d\n", err);
 exit:
     return err;
 }
@@ -269,7 +269,7 @@ static inline int __mdnsOffload_setOffloadState(struct wiphy *wiphy,
     MDNS_OFFLOAD_DEBUG("mdnsOffload: setOffloadState\n");
     nla_for_each_attr(iter, data, len, rem) {
         type = nla_type(iter);
-        //printk("mdnsOffload: attr type:%d\n", type);
+        //AML_INFO("mdnsOffload: attr type:%d\n", type);
         switch (type) {
             case WIFI_MDNS_OFFLOAD_ATTRIBUTE_STATE:
                 enabled = nla_get_u32(iter);
@@ -344,7 +344,7 @@ static inline int __mdnsOffload_addProtocolResponses(struct wiphy *wiphy,
     memset(&offloadData, 0, sizeof(offloadData));
     nla_for_each_attr(iter, data, len, rem) {
         type = nla_type(iter);
-        //printk("mdnsOffload: attr type:%d\n", type);
+        //AML_INFO("mdnsOffload: attr type:%d\n", type);
         switch (type) {
             case WIFI_MDNS_OFFLOAD_ATTRIBUTE_NETWORK_INTERFACE:
                 strncpy(ifname, (char *)nla_data(iter), sizeof(ifname) - 1);
@@ -355,10 +355,10 @@ static inline int __mdnsOffload_addProtocolResponses(struct wiphy *wiphy,
                 p_pkt_len = &pkt_len;
                 break;
             case WIFI_MDNS_OFFLOAD_ATTRIBUTE_OFFLOAD_PKT_DATA:
-                if (pkt_len > 0) {
+                if ((pkt_len > 0) && (!pkt_data)) {
                     pkt_data = (unsigned char *)kmalloc(pkt_len, GFP_KERNEL);
                     if (!pkt_data) {
-                        printk("mdnsOffload: alloc failed!\n");
+                        AML_ERR("mdnsOffload: alloc failed!\n");
                         err = -ENOMEM;
                         goto exit;
                     }
@@ -371,11 +371,11 @@ static inline int __mdnsOffload_addProtocolResponses(struct wiphy *wiphy,
                 p_criteriaListNum = &criteriaListNum;
                 break;
             case WIFI_MDNS_OFFLOAD_ATTRIBUTE_MATCH_CRITERIA_DATA:
-                if (criteriaListNum > 0) {
+                if ((criteriaListNum > 0) && (!criteriaList)) {
                     size = criteriaListNum * sizeof(matchCriteria);
                     criteriaList = (matchCriteria *)kmalloc(size, GFP_KERNEL);
                     if (!criteriaList) {
-                        printk("mdnsOffload: alloc failed!\n");
+                        AML_ERR("mdnsOffload: alloc failed!\n");
                         err = -ENOMEM;
                         goto exit;
                     }
@@ -396,20 +396,20 @@ static inline int __mdnsOffload_addProtocolResponses(struct wiphy *wiphy,
     MDNS_OFFLOAD_DEBUG("mdnsOffload: addProtocolResponses: pkt_len:%u\n", pkt_len);
     MDNS_OFFLOAD_DEBUG("mdnsOffload: addProtocolResponses: criteriaListNum:%u\n",
         criteriaListNum);
-    if (g_mdns_offload_debug){
+    if (g_mdns_offload_debug) {
         MDNS_OFFLOAD_DEBUG("criteria list:\n");
         for (i = 0; i < criteriaListNum; i++) {
-            qname = __mdnsOffload_decode_qname(pkt_data, pkt_len,
-                criteriaList[i].nameOffset);
-            MDNS_OFFLOAD_DEBUG("%d. type:%d\tnameOffset:%d\tname:%s\n", i + 1,
-                criteriaList[i].type,
-                criteriaList[i].nameOffset,
-                (qname && strlen(qname) > 0) ? qname : "none");
-            kfree(qname);
-            qname = NULL;
+	        qname = __mdnsOffload_decode_qname(pkt_data, pkt_len,
+	            criteriaList[i].nameOffset);
+	        MDNS_OFFLOAD_DEBUG("%d. type:%d\tnameOffset:%d\tname:%s\n", i + 1,
+	            criteriaList[i].type,
+	            criteriaList[i].nameOffset,
+	            (qname && strlen(qname) > 0) ? qname : "none");
+	        kfree(qname);
+	        qname = NULL;
         }
         MDNS_OFFLOAD_DEBUG("rawOffloadPacket:\n");
-            __mdnsOffload_dump_msg(pkt_data, pkt_len);
+        __mdnsOffload_dump_msg(pkt_data, pkt_len);
     }
     if (mdns_offload_ops.addProtocolResponses) {
         offloadData.rawOffloadPacketLen = pkt_len;
@@ -450,7 +450,7 @@ static inline int __mdnsOffload_removeProtocolResponses(struct wiphy *wiphy,
     MDNS_OFFLOAD_DEBUG("mdnsOffload: removeProtocolResponses\n");
     nla_for_each_attr(iter, data, len, rem) {
         type = nla_type(iter);
-        //printk("mdnsOffload: attr type:%d\n", type);
+        //AML_INFO("mdnsOffload: attr type:%d\n", type);
         switch (type) {
             case WIFI_MDNS_OFFLOAD_ATTRIBUTE_RECORD_KEY:
                 recordKey = nla_get_u32(iter);
@@ -494,7 +494,7 @@ static inline int __mdnsOffload_getAndResetHitCounter(struct wiphy *wiphy,
     MDNS_OFFLOAD_DEBUG("mdnsOffload: getAndResetHitCounter\n");
     nla_for_each_attr(iter, data, len, rem) {
         type = nla_type(iter);
-        //printk("mdnsOffload: attr type:%d\n", type);
+        //AML_INFO("mdnsOffload: attr type:%d\n", type);
         switch (type) {
             case WIFI_MDNS_OFFLOAD_ATTRIBUTE_RECORD_KEY:
                 recordKey = nla_get_u32(iter);
@@ -572,7 +572,7 @@ static inline int __mdnsOffload_addToPassthroughList(struct wiphy *wiphy,
     memset(qname, 0, sizeof(qname));
     nla_for_each_attr(iter, data, len, rem) {
         type = nla_type(iter);
-        //printk("mdnsOffload: attr type:%d\n", type);
+        //AML_INFO("mdnsOffload: attr type:%d\n", type);
         switch (type) {
             case WIFI_MDNS_OFFLOAD_ATTRIBUTE_NETWORK_INTERFACE:
                 strncpy(ifname, (char *)nla_data(iter), sizeof(ifname) - 1);
@@ -627,7 +627,7 @@ static inline int __mdnsOffload_removeFromPassthroughList(struct wiphy *wiphy,
     memset(qname, 0, sizeof(qname));
     nla_for_each_attr(iter, data, len, rem) {
         type = nla_type(iter);
-        //printk("mdnsOffload: attr type:%d\n", type);
+        //AML_INFO("mdnsOffload: attr type:%d\n", type);
         switch (type) {
             case WIFI_MDNS_OFFLOAD_ATTRIBUTE_NETWORK_INTERFACE:
                 strncpy(ifname, (char *)nla_data(iter), sizeof(ifname) - 1);
@@ -677,7 +677,7 @@ static inline int __mdnsOffload_setPassthroughBehavior(struct wiphy *wiphy,
     memset(ifname, 0, sizeof(ifname));
     nla_for_each_attr(iter, data, len, rem) {
         type = nla_type(iter);
-        //printk("mdnsOffload: attr type:%d\n", type);
+        //AML_INFO("mdnsOffload: attr type:%d\n", type);
         switch (type) {
             case WIFI_MDNS_OFFLOAD_ATTRIBUTE_NETWORK_INTERFACE:
                 strncpy(ifname, (char *)nla_data(iter), sizeof(ifname) - 1);

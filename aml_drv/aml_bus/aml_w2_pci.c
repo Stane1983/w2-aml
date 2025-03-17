@@ -7,6 +7,9 @@
  *
  ******************************************************************************
  */
+
+#define AML_MODULE   PCI
+
 #include <linux/pci.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -15,6 +18,7 @@
 #include "usb_common.h"
 #include "aml_interface.h"
 #include "chip_intf_reg.h"
+#include "aml_log.h"
 
 #define W2p_VENDOR_AMLOGIC_EFUSE 0x1F35
 #define W2p_PRODUCT_AMLOGIC_EFUSE 0x0602
@@ -67,15 +71,15 @@ static int aml_pci_probe(struct pci_dev *pci_dev,
 {
     int ret = -ENODEV;
 
-    printk("%s:%d %x\n", __func__, __LINE__, pci_id->vendor);
+    AML_INFO(" %x\n", pci_id->vendor);
 
     if (pci_id->vendor == PCI_VENDOR_ID_XILINX) {
-        printk("%s:%d %x\n", __func__, __LINE__, PCI_VENDOR_ID_XILINX);
+        AML_INFO("%x\n", PCI_VENDOR_ID_XILINX);
         ret = aml_v7_platform_init(pci_dev, &g_aml_plat_pci);
     }
     else if ((pci_id->vendor == 0) || (pci_id->vendor == W2p_VENDOR_AMLOGIC_EFUSE) || (pci_id->vendor == W2pRevB_PRODUCT_AMLOGIC_EFUSE))
     {
-        printk("%s:%d pcie vendor id %x\n", __func__, __LINE__, pci_id->vendor);
+        AML_INFO(" pcie vendor id %x\n", pci_id->vendor);
         ret = aml_v7_platform_init(pci_dev, &g_aml_plat_pci);
     }
 
@@ -90,7 +94,7 @@ static int aml_pci_probe(struct pci_dev *pci_dev,
 
 static void aml_pci_remove(struct pci_dev *pci_dev)
 {
-    printk("%s:%d \n", __func__, __LINE__);
+    AML_FN_ENTRY();
     g_aml_plat_pci->deinit(g_aml_plat_pci);
 }
 bool g_pcie_suspend = 0;
@@ -107,7 +111,7 @@ static int aml_pci_suspend(struct pci_dev *pdev, pm_message_t state)
             cnt++;
             if (cnt > 40)
             {
-                printk("wifi suspend fail \n");
+                AML_ERR("wifi suspend fail \n");
                 return -1;
             }
         }
@@ -115,7 +119,7 @@ static int aml_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 
     g_pcie_suspend = 1;
     atomic_set(&g_wifi_pm.bus_suspend_cnt, 1);
-    printk("%s\n", __func__);
+    AML_INFO("%s\n", __func__);
     //aml_suspend_dump_cfgregs(bus, "BEFORE_EP_SUSPEND");
     pci_save_state(pdev);
     pci_enable_wake(pdev, PCI_D0, 1);
@@ -126,7 +130,7 @@ static int aml_pci_suspend(struct pci_dev *pdev, pm_message_t state)
     }
     //Delay 100ms to ensure ltssm enters L1 completion, delaying PCIe PHY power-off.
     usleep_range(100000, 120000);
-    printk("%s ok exit\n", __func__);
+    AML_FN_EXIT();
     //aml_suspend_dump_cfgregs(bus, "AFTER_EP_SUSPEND");
     return ret;
 }
@@ -135,7 +139,7 @@ static int aml_pci_resume(struct pci_dev *pdev)
 {
     int err;
     unsigned int wake_flag;
-    printk("%s\n", __func__);
+    AML_FN_ENTRY();
     pci_restore_state(pdev);
 
     pci_set_master(pdev);
@@ -144,8 +148,8 @@ static int aml_pci_resume(struct pci_dev *pdev)
         ERROR_DEBUG_OUT("pci_set_power_state error %d \n", err);
         goto out;
     }
-    wake_flag = aml_pci_read_for_bt(AML_ADDR_AON, RG_AON_A55);
-    printk("%s %d wake_flag = 0x%x\n", __func__, __LINE__, wake_flag);
+    wake_flag = aml_pci_read_for_bt(AML_ADDR_AON, RG_AON_A25);
+    AML_INFO(" wake_flag = 0x%x\n", wake_flag);
     while (!((wake_flag != 0xffffffff) && (wake_flag & BIT(0))))
     {
         err = pci_set_power_state(pdev, PCI_D0);
@@ -153,11 +157,11 @@ static int aml_pci_resume(struct pci_dev *pdev)
             ERROR_DEBUG_OUT("pci_set_power_state error %d \n", err);
             goto out;
         }
-        wake_flag = aml_pci_read_for_bt(AML_ADDR_AON, RG_AON_A55);
+        wake_flag = aml_pci_read_for_bt(AML_ADDR_AON, RG_AON_A25);
         udelay(10);
     }
     g_pcie_suspend = 0;
-    printk("%s ok exit\n", __func__);
+    AML_INFO(" ok exit\n");
 out:
     atomic_set(&g_wifi_pm.bus_suspend_cnt, 0);
     return err;
@@ -166,13 +170,20 @@ out:
 extern uint32_t aml_pci_read_for_bt(int base, u32 offset);
 extern void aml_pci_write_for_bt(u32 val, int base, u32 offset);
 extern lp_shutdown_func g_lp_shutdown_func;
+extern bt_shutdown_func g_bt_shutdown_func;
 
 static void aml_pci_shutdown(struct pci_dev *pdev)
 {
-    printk("%s %d, aml_pci_shutdown begin \n",__func__, __LINE__);
+    AML_INFO(" aml_pci_shutdown begin \n");
 
     //Mask interrupt reporting to the host
     atomic_set(&g_wifi_pm.is_shut_down, 2);
+
+    // Notify fw to enter shutdown mode
+    if (g_bt_shutdown_func != NULL)
+    {
+        g_bt_shutdown_func();
+    }
 
     // Notify fw to enter shutdown mode
     if (g_lp_shutdown_func != NULL)
@@ -182,7 +193,7 @@ static void aml_pci_shutdown(struct pci_dev *pdev)
 
     //notify fw shutdown
     //notify bt wifi will go shutdown
-    aml_pci_write_for_bt(aml_pci_read_for_bt(AML_ADDR_AON, RG_AON_A55) | BIT(28), AML_ADDR_AON, RG_AON_A55);
+    aml_pci_write_for_bt(aml_pci_read_for_bt(AML_ADDR_AON, RG_AON_A16) | BIT(28), AML_ADDR_AON, RG_AON_A16);
     g_pci_shutdown = 1;
 
     if (pci_is_enabled(pdev))
@@ -190,7 +201,7 @@ static void aml_pci_shutdown(struct pci_dev *pdev)
         msleep(100);
         pci_disable_device(pdev);
     }
-    printk("%s\n", __func__);
+    AML_FN_EXIT();
 }
 
 static struct pci_driver aml_pci_drv = {
@@ -213,10 +224,10 @@ int aml_pci_insmod(void)
     g_pci_msg_suspend = 0;
 
     if (err) {
-        printk("failed to register pci driver: %d \n", err);
+        AML_ERR("failed to register pci driver: %d \n", err);
     }
 
-    printk("%s:%d \n", __func__, __LINE__);
+    AML_FN_EXIT();
     return err;
 }
 
@@ -226,7 +237,7 @@ void aml_pci_rmmod(void)
     g_pci_driver_insmoded = 0;
     g_pci_after_probe = 0;
 
-    printk("%s(%d) aml common driver rmsmod\n",__func__, __LINE__);
+    AML_INFO(" aml common driver rmsmod\n");
 }
 
 static u8* aml_pci_get_address_for_bt(struct aml_plat_pci *aml_plat, int addr_name,
@@ -245,35 +256,35 @@ static u8* aml_pci_get_address_for_bt(struct aml_plat_pci *aml_plat, int addr_na
 
     if (addr_name == AML_ADDR_CPU) //0x00000000-0x0007ffff (ICCM)
     {
-        printk("%s:%d, address %x\n", __func__, __LINE__, aml_pci->pci_bar4_vaddr + offset);
+        AML_INFO(" address %x\n", aml_pci->pci_bar4_vaddr + offset);
         return aml_pci->pci_bar4_vaddr + offset;
     }
     else if (addr_name == AML_ADDR_MAC_PHY) //0x00a00000-0x00afffff
     {
-        printk("%s:%d, address %x\n", __func__, __LINE__, aml_pci->pci_bar3_vaddr + offset);
+        AML_INFO(" address %x\n", aml_pci->pci_bar3_vaddr + offset);
         return aml_pci->pci_bar3_vaddr + offset - 0x00a00000;
     }
     else if (addr_name == AML_ADDR_AON)// 0x00c00000 - 0x00ffffff (AON & DCCM)
     {
-        printk("%s:%d, address %x\n", __func__, __LINE__, aml_pci->pci_bar2_vaddr + offset);
+        AML_INFO(" address %x\n", aml_pci->pci_bar2_vaddr + offset);
         return aml_pci->pci_bar2_vaddr + offset - 0x00c00000;
     }
     else if (addr_name == AML_ADDR_SYSTEM)
     {
         if (offset >= IPC_REG_BASE_ADDR)
         {
-            printk("%s:%d, bar5 %x, address %x\n", __func__, __LINE__, aml_pci->pci_bar5_vaddr, aml_pci->pci_bar5_vaddr + offset - IPC_REG_BASE_ADDR);
+            AML_INFO("bar5 %x, address %x\n", aml_pci->pci_bar5_vaddr, aml_pci->pci_bar5_vaddr + offset - IPC_REG_BASE_ADDR);
             return aml_pci->pci_bar5_vaddr + offset - IPC_REG_BASE_ADDR;
         }
         else
         {
-            printk("%s:%d, address %x\n", __func__, __LINE__, aml_pci->pci_bar0_vaddr + offset);
+            AML_INFO(" address %x\n", aml_pci->pci_bar0_vaddr + offset);
             return aml_pci->pci_bar0_vaddr + offset;
         }
     }
     else
     {
-        printk("%s:%d, error addr_name\n", __func__,__LINE__);
+        AML_ERR(" error addr_name\n");
         return NULL;
     }
 
@@ -305,7 +316,7 @@ static u8* aml_pci_get_address_for_bt(struct aml_plat_pci *aml_plat, int addr_na
         }
     }
 
-    printk("%s:%d, addr(0x%x) or addr_name(0x%x) err\n", __func__,__LINE__, offset, addr_name);
+    AML_INFO(" addr(0x%x) or addr_name(0x%x) err\n", offset, addr_name);
     return NULL;
 
 #endif //CONFIG_AML_FPGA_PCIE
@@ -315,7 +326,7 @@ u32 aml_pci_readl(u8* addr)
 {
     if (g_pci_shutdown)
     {
-        printk("pci readl err\n");
+        AML_ERR("pci readl err\n");
         return 0;
     }
     else
@@ -327,7 +338,7 @@ void aml_pci_writel(u32 data, u8* addr)
     if (!g_pci_shutdown)
         writel(data, addr);
     else
-        printk("pci_writel err\n");
+        AML_ERR("pci_writel err\n");
     return;
 }
 

@@ -10,6 +10,8 @@
 ****************************************************************************************
 */
 
+#define AML_MODULE      TCP
+
 #include <linux/if_ether.h>
 #include <linux/tcp.h>
 #include <linux/ip.h>
@@ -166,21 +168,22 @@ static void aml_send_tcp_ack(struct aml_tcp_ack_tx *tx_info)
             sdio_txhdr->mpdu_buf_flag = 0;
             sdio_txhdr->mpdu_buf_flag = HW_FIRST_MPDUBUF_FLAG | HW_LAST_MPDUBUF_FLAG | HW_LAST_AGG_FLAG;
             sdio_txhdr->mpdu_buf_flag |= HW_MPDU_LEN_SET(sw_txhdr->frame_len + SDIO_FRAME_TAIL_LEN);
-
+            /* coverity[overrun-buffer-arg] */
             memset(&sdio_txhdr->tx_vector, 0, sizeof(struct hw_tx_vector_bits) + sizeof(struct txdesc_host)/*8 byte alignment*/);
         }
 
     }
     if (aml_bus_type != PCIE_MODE) {
-        AML_PRINT(AML_DBG_MODULES_TX, "ethertype:0x%04x, credits:%d, tid:%d, vif_idx:%d\n",
+        /* coverity[dereference] */
+        AML_RLMT_DBG("ethertype:0x%04x, credits:%d, tid:%d, vif_idx:%d\n",
                   cpu_to_be16(desc->host.ethertype), txq->credits, desc->host.tid, desc->host.vif_idx);
     }
 
     /* queue the buffer */
     spin_lock_bh(&aml_hw->tx_lock);
-
+    /* coverity[dereference] */
     if (txq->idx == TXQ_INACTIVE) {
-        printk("%s:%d Get txq idx is inactive after spin_lock_bh	\n", __func__, __LINE__);
+        AML_INFO("Get txq idx is inactive after spin_lock_bh	\n");
         //"do not push and process it with kernel list lib it whill be re-pull out and used this freed buf"
         spin_unlock_bh(&aml_hw->tx_lock);
         goto free;
@@ -193,6 +196,7 @@ static void aml_send_tcp_ack(struct aml_tcp_ack_tx *tx_info)
     }
     spin_unlock_bh(&aml_hw->tx_lock);
 
+    /* coverity[leaked_storage] - sw_txhdr will be freed later */
     return;
 
 free:
@@ -200,8 +204,8 @@ free:
         kmem_cache_free(aml_hw->sw_txhdr_cache, sw_txhdr);
     if (skb)
         dev_kfree_skb_any(skb);
+    /* coverity[leaked_storage] - sw_txhdr is freed */
     return;
-
 }
 
 static void aml_tcp_sess_ageout(struct aml_tcp_sess_mgr *ack_mgr)
@@ -210,8 +214,8 @@ static void aml_tcp_sess_ageout(struct aml_tcp_sess_mgr *ack_mgr)
     struct aml_tcp_sess_info *tcp_info;
     unsigned char drop_cnt;
 
+    spin_lock_bh(&ack_mgr->lock);
     if (time_after(jiffies, ack_mgr->last_time + ack_mgr->timeout)) {
-        spin_lock_bh(&ack_mgr->lock);
         ack_mgr->last_time = jiffies;
         spin_unlock_bh(&ack_mgr->lock);
 
@@ -248,6 +252,9 @@ static void aml_tcp_sess_ageout(struct aml_tcp_sess_mgr *ack_mgr)
             atomic_set(&ack_mgr->max_drop_cnt, drop_cnt);
         }
     }
+    else {
+        spin_unlock_bh(&ack_mgr->lock);
+    }
 }
 
 static int aml_tcp_sess_find(struct aml_tcp_sess_mgr *ack_mgr,
@@ -265,6 +272,7 @@ static int aml_tcp_sess_find(struct aml_tcp_sess_mgr *ack_mgr,
             ret = -1;
 
             pkt_info_temp = &tcp_info->pkt_info;
+            /* coverity[missing_lock] */
             if (tcp_info->busy &&
                pkt_info_temp->dest == pkt_info->dest &&
                pkt_info_temp->source == pkt_info->source &&
@@ -320,8 +328,11 @@ static int aml_get_tcp_ack_info(struct net_device *ndev, struct tcphdr *tcphdr, 
                         if (ws == 0xf) {
                             *ptr = *ptr - 1;
                         }
-                        else if(ws != 0)
+                        else if(ws != 0) {
+                            /* coverity[overflow_const]*/
                            *ptr = ws - 1;
+                        }
+                        /* coverity[overflow_const]*/
                         *win_scale = (1 << (*ptr));
                     }
                     break;
@@ -360,12 +371,16 @@ static int aml_check_tcp_ack_type(struct aml_vif *aml_vif, unsigned char *data,
     ip_hdr_len = iphdr->ihl * 4;
     temp = (unsigned char *)(iphdr) + ip_hdr_len;
     tcphdr = (struct tcphdr *)temp;
+    tcp_tot_len = ntohs(iphdr->tot_len) - ip_hdr_len;
+
     /*only tcp ack flag*/
     if (temp[13] != 0x10) {
         /*get win scale from SYNC ACK*/
         if (temp[13] == 0x12) {
-            ret = aml_get_tcp_ack_info(aml_vif->ndev, tcphdr, tcp_tot_len,win_scale);
+            /* coverity[tainted_data] */
+            ret = aml_get_tcp_ack_info(aml_vif->ndev, tcphdr, tcp_tot_len, win_scale);
             tcphdr->check = 0;
+            /* coverity[lower_bounds] */
             tcphdr->check = tcp_checksum(tcphdr, ntohs(iphdr->tot_len) - iphdr->ihl * 4, iphdr->saddr, iphdr->daddr);
         }
         return 0;
@@ -375,7 +390,7 @@ static int aml_check_tcp_ack_type(struct aml_vif *aml_vif, unsigned char *data,
         return 0;
     }
 
-    tcp_tot_len = ntohs(iphdr->tot_len) - ip_hdr_len;
+    /* coverity[tainted_data] */
     ret = aml_get_tcp_ack_info(aml_vif->ndev, tcphdr, tcp_tot_len,win_scale);
 
     if (ret > 0) {
@@ -415,6 +430,7 @@ static int aml_alloc_tcp_sess(struct aml_tcp_sess_mgr *ack_mgr)
         do {
             start = read_seqbegin(&tcp_info->seqlock);
             ret = -1;
+            /* coverity[missing_lock] */
             if (!tcp_info->busy) {
                 ack_mgr->free_index = -1;
                 ack_mgr->used_num++;
@@ -459,6 +475,7 @@ void aml_tcp_delay_ack_init(struct aml_hw *aml_hw)
 
     memset(ack_mgr, 0, sizeof(struct aml_tcp_sess_mgr));
     ack_mgr->aml_hw = aml_hw;
+    /* coverity[side_effect_free] */
     spin_lock_init(&ack_mgr->lock);
     atomic_set(&ack_mgr->max_timeout, MAX_TCP_ACK_TIMEOUT);
     if (aml_bus_type == USB_MODE) {
@@ -469,17 +486,21 @@ void aml_tcp_delay_ack_init(struct aml_hw *aml_hw)
         atomic_set(&ack_mgr->dynamic_adjust, 1);
     }
     ack_mgr->last_time = jiffies;
+    /* coverity[missing_lock] */
     ack_mgr->total_drop_cnt = 0;
     ack_mgr->timeout = msecs_to_jiffies(TCK_SESS_TIMEOUT_TIME);
     for (i = 0; i < AML_TCP_SESS_NUM; i++) {
         tcp_info = &ack_mgr->tcp_info[i];
         tcp_info->index = i;
+        /* coverity[side_effect_free] */
         seqlock_init(&tcp_info->seqlock);
+        /* coverity[missing_lock] */
         tcp_info->last_time = jiffies;
         tcp_info->timeout = msecs_to_jiffies(TCK_SESS_TIMEOUT_TIME);
         timer_setup(&tcp_info->timer, aml_tcp_ack_timeout, 0);
     }
-    atomic_set(&ack_mgr->enable, 1);
+    atomic_set(&ack_mgr->enable, 0); // disable tcp ack delay by default
+    atomic_set(&ack_mgr->force_delay_ack, FORCE_DELAY_ACK_AUTO);
 
     ack_mgr->ack_winsize = MIN_WIN;
     ack_mgr->win_scale = 1;
@@ -497,7 +518,6 @@ void aml_tcp_delay_ack_deinit(struct aml_hw *aml_hw)
 
     atomic_set(&ack_mgr->enable, 0);
     for (i = 0; i < AML_TCP_SESS_NUM; i++) {
-        drop_skb = NULL;
         write_seqlock_bh(&ack_mgr->tcp_info[i].seqlock);
         del_timer(&ack_mgr->tcp_info[i].timer);
         drop_skb = ack_mgr->tcp_info[i].skb;
@@ -575,8 +595,10 @@ int aml_replace_tcp_ack(struct sk_buff *skb,
         } else {
             ret = 1;
             tcp_info->skb = skb;
-            if (!timer_pending(&tcp_info->timer))
+            if (!timer_pending(&tcp_info->timer)) {
+                /* coverity[unchecked_value] */
                 mod_timer(&tcp_info->timer, (jiffies + msecs_to_jiffies(atomic_read(&ack_mgr->max_timeout))));
+            }
         }
     } else {
         AML_INFO("before ack: %d, %d\n", old_pkt->seq, pkt_info->seq);
@@ -595,31 +617,27 @@ int aml_replace_tcp_ack(struct sk_buff *skb,
     return ret;
 }
 
-/* return zero if no change */
-int aml_set_tcp_ack_accord_to_rssi(struct aml_sta *sta, struct aml_hw *aml_hw, s32_l rssi)
+/*
+    Currently, tcp ack enable is adjusted according to traffic busy, and RX throughput will climb for 1 to 3 seconds
+    because it is inevitable to judge the traffci busy based on the traffic for a period of time.
+*/
+void aml_set_tcp_ack_auto(struct aml_hw *aml_hw)
 {
     struct aml_tcp_sess_mgr *ack_mgr = &aml_hw->ack_mgr;
     bool enable = false;
 
-    if (aml_bus_type != USB_MODE)   /* only effect on USB device */
-        return 0;
+    if (atomic_read(&ack_mgr->force_delay_ack) != FORCE_DELAY_ACK_AUTO)
+        return;
 
-    if (aml_work_on_5g_band(aml_hw))
-        enable = true;  /* force to enable it if work on 5GHz band */
-    else if (rssi > ack_mgr->rssi_h_thr)
-        enable = true;  /* enable it if rssi is good enough */
-    else if (rssi >= ack_mgr->rssi_l_thr)
-        return 0;       /* no change if rssi in range[rssi_l_thr, rssi_h_thr] */
-    else
-        enable = false; /* rssi is worse, disable it */
+    enable = aml_hw->traffic_busy; /* traffic_busy == 1 enable, traffic_busy == 0 disable */
 
     if (enable == !!atomic_read(&ack_mgr->enable))
-        return 0;
+        return;
 
     atomic_set(&ack_mgr->enable, enable);
     /* printk("%s, set enable %d\n", __func__, enable); */
 
-    return 1;
+    return;
 }
 
 int aml_filter_tx_tcp_ack(struct net_device *dev,
@@ -632,7 +650,7 @@ int aml_filter_tx_tcp_ack(struct net_device *dev,
     unsigned int win = 0;
     struct aml_vif *aml_vif = netdev_priv(dev);
     struct aml_hw *aml_hw = aml_vif->aml_hw;
-    struct aml_pkt_info pkt_info;
+    struct aml_pkt_info pkt_info = {0};
     struct aml_pkt_info *pkt_info_ptr;
     struct aml_tcp_sess_info *tcp_info;
     struct aml_tcp_sess_mgr *ack_mgr = &aml_hw->ack_mgr;
@@ -654,13 +672,16 @@ int aml_filter_tx_tcp_ack(struct net_device *dev,
     if (index >= 0) {
         tcp_info = ack_mgr->tcp_info + index;
 
+        /* coverity[missing_lock] */
         if ((ack_mgr->win_scale != 0) && (tcp_info->win_scale != ack_mgr->win_scale)) {
             write_seqlock_bh(&tcp_info->seqlock);
+            /* coverity[thread1_overwrites_value_in_field] */
             tcp_info->win_scale = ack_mgr->win_scale;
             write_sequnlock_bh(&tcp_info->seqlock);
         }
 
         if (type > 0) {
+            /* coverity[missing_lock] */
             win = tcp_info->win_scale * pkt_info.win;
             if (win < (ack_mgr->ack_winsize * SIZE_KB))
                 type = 2;
@@ -702,8 +723,10 @@ int aml_filter_tx_tcp_ack(struct net_device *dev,
         tcp_info->win_scale = ack_mgr->win_scale;
         tcp_info->sta = sta;
         tcp_info->aml_vif = aml_vif;
-        if (!timer_pending(&tcp_info->timer))
+        if (!timer_pending(&tcp_info->timer)) {
+            /* coverity[unchecked_value] */
             mod_timer(&tcp_info->timer, (jiffies + msecs_to_jiffies(atomic_read(&ack_mgr->max_timeout))));
+        }
         pkt_info_ptr = &tcp_info->pkt_info;
         pkt_info_ptr->dest = pkt_info.dest;
         pkt_info_ptr->source = pkt_info.source;

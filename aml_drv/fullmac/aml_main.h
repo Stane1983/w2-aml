@@ -15,11 +15,16 @@
 #include "aml_tx.h"
 #include "aml_sap.h"
 
+#define AML_MIN_ROC_DUR   102
+#define SUSPEND_TX_REQ_FLUSH_TO   3000000000 //3s
+#define SUSPEND_TX_FLUSH_TO       5000000000 //5s
+
+
 int aml_cfg80211_init(struct aml_plat *aml_plat, void **platform_data);
 void aml_cfg80211_deinit(struct aml_hw *aml_hw);
 int aml_cfg80211_change_iface(struct wiphy *wiphy,
         struct net_device *dev, enum nl80211_iftype type, struct vif_params *params);
-void aml_get_version(void);
+const char *aml_get_version(void);
 void aml_cfg80211_sched_scan_results(struct wiphy *wiphy, uint64_t reqid);
 int aml_cancel_scan(struct aml_hw *aml_hw, struct aml_vif *vif);
 void aml_tx_rx_buf_init(struct aml_hw *aml_hw);

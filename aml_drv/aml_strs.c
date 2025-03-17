@@ -177,6 +177,10 @@ const char *const aml_mm_other_id2str[MM_SUB_A2E_MAX] = {
     [MDNS_REMOVE_PASS_LIST]          = "MDNS_REMOVE_PASS_LIST",
     [MDNS_RESET_ALL]                 = "MDNS_RESET_ALL",
     [MDNS_ADD_PROTOCOL_STATUS]       = "MDNS_ADD_PROTOCOL_STATUS",
+    [MM_SUB_TX_FLUSH]                = "MM_SUB_TX_FLUSH",
+    [MM_SUB_SET_LINKLOSS_THRESHOLD]  = "MM_SUB_SET_LINKLOSS_THRESHOLD",
+    [MM_SUB_SET_AGG_REQ]             = "MM_SUB_SET_AGG_REQ",
+
 };
 
 static const char *const aml_dbgid2str[MSG_I(DBG_MAX)] = {

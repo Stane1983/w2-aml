@@ -60,9 +60,9 @@ static u8 *scc_bcn_buf = NULL;  //used in new channel
 static u8 *scc_csa_bcn = NULL;  //used in old channel, add csa ie
 
 /*p2p related*/
-u8 g_scc_p2p_save[500] = {0,};
-u8 g_scc_p2p_len_before = 0;
-u8 g_scc_p2p_len_diff = 0;
+u8 g_scc_p2p_save[MAX_P2P_SAVE_LEN] = {0,};
+u32 g_scc_p2p_len_before = 0;
+u32 g_scc_p2p_len_diff = 0;
 bool g_scc_p2p_peer_5g_support = 0;
 
 char chan_width_trace[][35] = {
@@ -720,6 +720,11 @@ void aml_scc_check_chan_conflict(struct aml_hw *aml_hw)
                     break;
                 }
 
+                if (AML_VIF_TYPE(vif) == NL80211_IFTYPE_P2P_GO) {
+                    AML_INFO("GO mode do not switch scc\n");
+                    break;
+                }
+
                 if (target_chdef.chan->flags & IEEE80211_CHAN_RADAR) {
                     AML_INFO("target is radar chan");
                     break;
@@ -783,9 +788,11 @@ void aml_scc_deinit(void)
 {
     if (scc_bcn_buf) {
         kfree(scc_bcn_buf);
+        scc_bcn_buf = NULL;
     }
     if (scc_csa_bcn) {
         kfree(scc_csa_bcn);
+        scc_csa_bcn = NULL;
     }
     AML_SCC_CLEAR_BEACON_UPDATE();
 }

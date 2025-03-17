@@ -81,7 +81,7 @@ enum
 #define MDNS_RAW_DATA_LENGTH_MAX    492
 #define MDNS_LIST_CRITERIA_MAX      8
 #define MDNS_DATA_MAX 3
-#define MDNS_QNAME_LENGTH_MAX       80
+#define MDNS_QNAME_LENGTH_MAX       256
 
 /// For MAC HW States copied from "hal_machw.h"
 enum
@@ -403,11 +403,13 @@ enum priv_e2a_tag {
     PRIV_CSI_STATUS_SP_CFM,
     PRIV_SCANU_RESULT_IND,
     PRIV_COEX_STOP_RESTORE_TXQ_IND,
+    PRIV_COEX_GET_STATUS,
+    PRIV_RESUME_RXBUF_PTR_IND,
     PRIV_MDNS_ADDDATA_CFM,
     PRIV_MDNS_ADDPASSTHROUGH_CFM,
     PRIV_MDNS_GET_HIT_CFM,
     PRIV_MDNS_GET_MISS_CFM,
-    PRIV_COEX_GET_STATUS,
+    PRIV_EX_MM_VERSION_IND,
     PRIV_SUB_E2A_MAX,
 };
 
@@ -461,18 +463,22 @@ enum mm_sub_a2e_tag {
     MM_SUB_FIX_TXPWR = 44,
     MM_SUB_SET_USB_TRACE_STATE = 45,
     MM_SUB_SET_PUTV_TRACE_SWITCH = 46,
-    MM_SUB_ENABLE_RSSI_REG = 47,
-    MDNS_SET_STATE = 48,
-    MDNS_SET_BEHAVIOR = 49,
-    MDNS_ADD_PROTOCOL = 50,
-    MDNS_REMOVE_PROTOCOL = 51,
-    MDNS_GET_HIT = 52,
-    MDNS_GET_MISS = 53,
-    MDNS_ADD_PASS_LIST = 54,
-    MDNS_REMOVE_PASS_LIST = 55,
-    MDNS_RESET_ALL = 56,
-    MDNS_ADD_PROTOCOL_STATUS = 57,
-    MM_SUB_COEX_GET_STATUS = 58,
+    MM_SUB_COEX_GET_STATUS = 47,
+    MM_SUB_SET_MCC_RATIO = 48,
+    MM_SUB_ENABLE_RSSI_REG = 49,
+    MDNS_SET_STATE = 50,
+    MDNS_SET_BEHAVIOR = 51,
+    MDNS_ADD_PROTOCOL = 52,
+    MDNS_REMOVE_PROTOCOL = 53,
+    MDNS_GET_HIT = 54,
+    MDNS_GET_MISS = 55,
+    MDNS_ADD_PASS_LIST = 56,
+    MDNS_REMOVE_PASS_LIST = 57,
+    MDNS_RESET_ALL = 58,
+    MDNS_ADD_PROTOCOL_STATUS = 59,
+    MM_SUB_TX_FLUSH = 60,
+    MM_SUB_SET_LINKLOSS_THRESHOLD = 61,
+    MM_SUB_SET_AGG_REQ = 62,
     /// the MAX
     MM_SUB_A2E_MAX,
     /// New members cannot be added below
@@ -596,6 +602,11 @@ enum mm_features
 
 /// Maximum number of words in the configuration buffer
 #define PHY_CFG_BUF_SIZE     16
+
+struct resume_sync_ptr
+{
+    u32_l hw_rd;
+};
 
 /// Structure containing the parameters of the PHY configuration
 struct phy_cfg_tag
@@ -1562,9 +1573,7 @@ struct scanu_macth_set
   //SSID to be matched; may be zero-length in case of BSSID match or no match (RSSI only)
   struct mac_ssid ssId;
   //BSSID to be matched; may be all-zero BSSID in case of SSID match or no match (RSSI only)
-#if LINUX_VERSION_CODE > KERNEL_VERSION(4,12,0)
   struct mac_addr bssid;
-#endif
   //don't report scan results below this threshold (in s32 dBm)
   int8_t    rssiThreshold;
   //Minimum rssi threshold for each band to be applied
@@ -1595,10 +1604,8 @@ struct scanu_bss_select_adjust {
 /// Structure containing the parameters of the @ref SCANU_SCHED_START_REQ message
 struct scanu_sched_scan_start_req
 {
-#if LINUX_VERSION_CODE > KERNEL_VERSION(4,12,0)
     //identifies this request.
     uint64_t reqid;
-#endif
     struct scanu_start_req scanu_req;
 
     //number of match sets
@@ -3095,7 +3102,7 @@ struct coex_get_status
     u8_l tx_agg_num; //the tx agg num coex setting;
     u8_l rx_agg_num; //the rx agg num coex setting;
     u32_l bt_work_status; // bt connect info;
-    u32_l wifi_inact_sum;
+    u32_l wifi_intact_sum;
     u32_l wifi_act_sum;
     u8_l poc_cali_status;
     u8_l link_cali_status;
@@ -3457,5 +3464,46 @@ struct mm_mdns_passthrough_list {
     uint32_t length;
     uint8_t qname[MDNS_QNAME_LENGTH_MAX];
 };
+
+/// Structure containing the parameters of the @ref PRIV_EX_MM_VERSION_IND message.
+struct ex_mm_version_cfm {
+    uint32_t hash;
+};
+
+struct mcc_ratio_req
+{
+    u8_l mcc_ratio;
+};
+
+/// Structure containing the parameters of the @ref MM_SUB_SET_LINKLOSS_THRESHOLD message.
+struct linkloss_threshold_req {
+    uint32_t threshold;
+};
+
+enum {
+    AMSDU_TX = BIT(0),
+    AMSDU_RX = BIT(1),
+    AMPDU_TX = BIT(2),
+    AMPDU_RX = BIT(3),
+};
+
+struct agg_req_t
+{
+    u8_l vif_idx;
+    u8_l def_ampdu_tx;
+    u32_l dir;
+    union
+    {
+        struct
+        {
+            u32_l amsdu_tx :8;
+            u32_l amsdu_rx :8;
+            u32_l ampdu_tx :8;
+            u32_l ampdu_rx :8;
+        };
+        u32_l agg_num;
+    };
+};
+
 
 #endif // LMAC_MSG_H_

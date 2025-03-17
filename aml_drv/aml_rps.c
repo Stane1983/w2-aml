@@ -342,7 +342,7 @@ void aml_rps_switch_check(struct aml_hw *aml_hw, u8 flag)
         }
         if (AML_VIF_TYPE(aml_vif) == NL80211_IFTYPE_STATION ||
             AML_VIF_TYPE(aml_vif) == NL80211_IFTYPE_P2P_CLIENT) {
-            printk("%s:%d, flag %d\n", __func__, __LINE__, flag);
+            AML_INFO("flag %d\n", flag);
 #ifndef CONFIG_LINUXPC_VERSION
             if (flag == RPS_ON) {
                 aml_rps_cpus_enable(aml_vif->ndev);

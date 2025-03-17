@@ -113,15 +113,19 @@ static void aml_wq_doit(struct work_struct *work)
                 aml_send_notify_ip(aml_wq->aml_vif, IPV6_VER, aml_wq->data);
                 break;
             case AML_WQ_CANCEL_SCAN:
+                spin_lock_bh(&aml_hw->scan_req_lock);
                 if (aml_hw->scan_request) {
                     int error;
                     struct aml_vif *vif = aml_wq->aml_vif ;
+                    spin_unlock_bh(&aml_hw->scan_req_lock);
                     AML_INFO("action rx cancel scan, vif:%d\n",vif->vif_index);
                     error = aml_cancel_scan(aml_hw, vif);
                     if (error) {
                         AML_INFO("cancel scan fail:error = %d\n",error);
                     }
                     aml_set_scan_hang(vif, 0, __func__, __LINE__);
+                } else {
+                    spin_unlock_bh(&aml_hw->scan_req_lock);
                 }
                 break;
             case AML_WQ_WAIT_USB:
@@ -171,6 +175,7 @@ int aml_wq_init(struct aml_hw *aml_hw)
         AML_INFO("wq create failed");
         return -ENOMEM;
     }
+
     return 0;
 }
 

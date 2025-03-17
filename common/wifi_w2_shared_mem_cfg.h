@@ -54,17 +54,16 @@ LA ON: rx buffer large size 0x30000, small size: 0x20000
 #define USB_RXBUF_END_ADDR_LARGE             (0x60067788) // tx end 0x6007fcc0
 #endif
 
-/* usb trace use sharemem tx last 32K */
-#define USB_TRACE_START_ADDR                 (0x60078000) /* trace size: 0x8000 */
-#define USB_TRACE_END_ADDR                   (0x60080000)
-/* sdio trace use sram 27K size */
-#define SDIO_TRACE_START_ADDR                 (0xa10400)  /* trace size: 0x6C00 */
-#define SDIO_TRACE_END_ADDR                   (0xa17000)
+#define DCCM_TRACE_START_ADDR                 (0x820e28)
+#define DCCM_TRACE_END_ADDR                   (0x820e2c)
+#define HOST_DCCM_TRACE_END_ADDR              (0xd20e2c)
 
-#define SDIO_TRACE_TOTAL_SIZE    (SDIO_TRACE_END_ADDR - SDIO_TRACE_START_ADDR)
-#define USB_TRACE_TOTAL_SIZE     (USB_TRACE_END_ADDR - USB_TRACE_START_ADDR)
-#define SDIO_TRACE_MAX_SIZE      (SDIO_TRACE_TOTAL_SIZE >> 1) /* trace max size is total size 1/2 */
-#define USB_TRACE_MAX_SIZE       (USB_TRACE_TOTAL_SIZE >> 1)  /* trace max size is total size 1/2 */
+/* trace use dccm 20K */
+#define TRACE_START_ADDR                 (0x820e30)
+#define TRACE_END_ADDR                   (0x825e30)
+
+#define TRACE_TOTAL_SIZE    (TRACE_END_ADDR - TRACE_START_ADDR)
+#define TRACE_MAX_SIZE      (TRACE_TOTAL_SIZE >> 1) /* trace max size is total size 1/2 */
 
 //sdio
 #define RX_BUFFER_LEN_SMALL              (RXBUF_END_ADDR_SMALL - RXBUF_START_ADDR)
@@ -84,8 +83,9 @@ enum sdio_usb_e2a_irq_type {
     DYNAMIC_BUF_HOST_TX_STOP  = 1,
     DYNAMIC_BUF_HOST_TX_START,
     DYNAMIC_BUF_NOTIFY_FW_TX_STOP,
-    DYNAMIC_BUF_LA_SWITCH_FINSH,
-    DYNAMIC_BUF_TRACE_SWITCH_FINSH,
+    DYNAMIC_BUF_LA_SWITCH_FINISH,
+    DYNAMIC_BUF_TRACE_EXPEND_FINISH,
+    DYNAMIC_BUF_TRACE_REDUCE_FINISH,
     EXCEPTION_IRQ,
 };
 
@@ -114,6 +114,9 @@ struct sdio_buffer_control
     uint32_t occupy_buffer;
     uint32_t last_new_read;
     uint8_t  usb_trace_enable;
+    uint8_t  usb_trace_reduce;
+    uint8_t  usb_trace_large;
+    uint8_t  usb_trace_en_lock;
 };
 extern struct sdio_buffer_control sdio_buffer_ctrl;
 

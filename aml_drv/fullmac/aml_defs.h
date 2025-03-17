@@ -20,6 +20,7 @@
 #include <net/cfg80211.h>
 #include <linux/slab.h>
 #include <linux/workqueue.h>
+#include <linux/pm_qos.h>
 
 #include "aml_mod_params.h"
 #include "aml_debugfs.h"
@@ -94,6 +95,9 @@
 #define AML_CONNECTING   BIT(0)
 #define AML_DISCONNECTING   BIT(1)
 #define AML_GETTING_IP   BIT(2)
+
+#define HOST_REQUEST_DISCONNECT (BIT(15))
+#define MAC_RS_DEAUTH_SENDER_LEFT_IBSS_ESS        3
 
 enum wifi_module_sn {
       MODULE_ITON = 0X1,
@@ -335,7 +339,7 @@ struct aml_vif {
             int ft_assoc_ies_len;
             u8 ft_target_ap[ETH_ALEN];
             u8 scan_hang;
-            u16 scan_duration;
+            u32 scan_duration;
             u8 cancel_scan_cfm;
             u8 assoc_ssid[MAC_SSID_LEN];
             int assoc_ssid_len;
@@ -499,6 +503,7 @@ struct aml_sta {
     enum nl80211_mesh_power_mode mesh_pm;
     int listen_interval;
     struct twt_setup_ind twt_ind; /*TWT Setup indication*/
+    struct aml_reo_session *reos[IEEE80211_NUM_UPS];
 };
 
 #define AML_INVALID_STA 0xFF
@@ -548,6 +553,12 @@ struct aml_stats {
     struct aml_amsdu_stats amsdus[NX_TX_PAYLOAD_MAX];
 #endif
     int amsdus_rx[64];
+
+    /* SDIO/USB only */
+#define AML_RX_TRANS_RANK_NUM           10
+#define AML_RX_TRANS_RANK_SIZE_0        (128U << 10)    /* 128K */
+    u32 rx_trans[AML_RX_TRANS_RANK_NUM];
+    u32 rx_trans_total;
 };
 
 #ifdef CONFIG_SDIO_TX_ENH
@@ -698,6 +709,14 @@ enum suspend_ind_state {
     SUSPEND_IND_DONE,
 };
 
+enum rxbuf_ptr_update_state {
+    /*init rx ptr state*/
+    RXBUF_PTR_UPDATE_NONE,
+    /*rx_ptr update done used in resume*/
+    RXBUF_PTR_UPDATE_DONE,
+    /*set state wait when host resume*/
+    RXBUF_PTR_UPDATE_WAIT,
+};
 
 #define WOW_MAX_PATTERNS 4
 
@@ -739,6 +758,7 @@ struct assoc_info {
  * @plat: Underlying AML platform information
  * @phy: PHY Configuration
  * @version_cfm: MACSW/HW versions (as obtained via MM_VERSION_REQ)
+ * @version_hashid: stroe the hashid of fw version
  * @machw_type: Type of MACHW (see AML_MACHW_xxx)
  *
  * @mod_params: Driver parameters
@@ -763,6 +783,7 @@ struct assoc_info {
  * @roc: Information of current Remain on Channel request (NULL if Roc requested)
  * @scan_request: Information of current scan request
  * @radar: Radar detection information
+ * @scan_duration: backup scan_duration from cfg
  *
  * @tx_lock: Spinlock to protect TX path
  * @txq: Table of STA/TID TX queues
@@ -800,6 +821,7 @@ struct aml_hw {
     struct aml_plat *plat;
     struct aml_phy_info phy;
     struct mm_version_cfm version_cfm;
+    u32 version_hashid;
     int machw_type;
 
     // Global wifi config
@@ -828,9 +850,12 @@ struct aml_hw {
     struct aml_survey_info survey[SCAN_CHANNEL_MAX];
     struct aml_roc *roc;
     spinlock_t roc_lock;
+    spinlock_t scan_req_lock;
     struct cfg80211_scan_request *scan_request;
+    struct cfg80211_sched_scan_request *sched_request;
     struct aml_radar radar;
     int show_switch_info;
+    int scan_duration;
 
     // TX path
     spinlock_t tx_lock;
@@ -849,29 +874,24 @@ struct aml_hw {
 
     // RX path
     struct rxbuf_list rxbuf_list[RXBUF_NUM];
+    spinlock_t free_list_lock;
     struct list_head rxbuf_free_list;
+    spinlock_t used_list_lock;
     struct list_head rxbuf_used_list;
 
     struct aml_defer_rx defer_rx;
-    uint32_t rx_buf_state;
-    uint32_t rx_buf_end;
-    uint32_t rx_buf_len;
-    uint32_t fw_new_pos;
-    uint32_t fw_buf_pos;
-    uint32_t last_fw_pos;
-    uint32_t recv_pkt_len;
-    uint32_t dynabuf_stop_tx;
-    uint32_t send_tx_stop_to_fw;
-    uint8_t *host_buf;
-    uint8_t *host_buf_start;
-    uint8_t *host_buf_end;
-    uint8_t *rx_host_switch_addr;
-    spinlock_t reoder_lock;
-    spinlock_t buf_start_lock;
+    uint32_t rx_buf_state;        /* dynamic switch host rxbuf state */
+    uint32_t rx_buf_end;          /* fw sharemem rxbuf end addr recorded on the host */
+    uint32_t fw_new_pos;          /* host reads the end address of sharemem rxbuf data on the fw, which is a sharemem rxdesc address */
+    uint32_t fw_buf_pos;          /* host reads the start address of sharemem rxbuf data on the fw, which is a sharemem rxdesc address */
+    uint32_t dynabuf_stop_tx;     /* dynamic buf switch, tx stop flag */
+    uint32_t send_tx_stop_to_fw;  /* dynamic buf switch, send tx stop to fw flag */
+    uint8_t *host_buf;            /* host buf for test */
+#ifdef CONFIG_AML_SDIO_USB_FW_REORDER
+    bool aml_sdio_usb_host_reorder;      /* only effect on SDIO/USB, PCIE always does reorder in firmware */
+    spinlock_t reorder_lock;
+#endif
     struct assoc_info rx_assoc_info;
-
-    spinlock_t free_list_lock;
-    spinlock_t used_list_lock;
 
 #ifdef CONFIG_AML_PREALLOC_BUF_SKB
     spinlock_t prealloc_rxbuf_lock;
@@ -959,6 +979,7 @@ struct aml_hw {
     spinlock_t tx_desc_lock;
     spinlock_t rx_lock;
 
+    /* FIXME: use the definition and API of "struct aml_task" */
     struct task_struct *aml_irq_task;
     struct semaphore aml_irq_sem;
     struct completion aml_irq_completion;
@@ -989,13 +1010,17 @@ struct aml_hw {
     char aml_txcfm_completion_init;
     int aml_txcfm_task_quit;
 
+    /* FIXME: move the following struct into usb_common.h/c */
+    struct {
+        struct urb urb;
+        struct usb_ctrlrequest req;
+        u32 fw_ptrs[4];
+    } *usb;
 
-    struct urb *g_urb;
     uint16_t trb_wait_time;
-    struct usb_ctrlrequest *g_cr;
-    unsigned char *g_buffer;
     u8 la_enable;
     u8 trace_enable;
+    u8 trace_malloc_success;
     // Debug FS and stats
     struct aml_debugfs debugfs;
     struct aml_stats *stats;
@@ -1012,6 +1037,7 @@ struct aml_hw {
     u8 repush_rxdesc;
     u8 repush_rxbuff_cnt;
     u8 traffic_busy;
+    u8 scan_abort_flag;
     /*management tcp session*/
     struct aml_tcp_sess_mgr ack_mgr;
 #ifdef CONFIG_AML_NAPI
@@ -1026,9 +1052,12 @@ struct aml_hw {
     /*if the skb cnt of pending queue >= napi_pend_pkt_num,append to napi_rx_upload_queue*/
     u8 napi_pend_pkt_num;
 #endif
-    struct freq_qos_request *qos_req;
-    int min_cpu_freq;
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+    struct freq_qos_request qos_req;
+#endif
+    bool wfd_present;
+    u8 trace_mode;
+    uint64_t pno_scan_reqid;
 };
 
 u8 *aml_build_bcn(struct aml_bcn *bcn, struct cfg80211_beacon_data *new);
@@ -1050,7 +1079,20 @@ static inline bool is_multicast_sta(int sta_idx)
 {
     return (sta_idx >= NX_REMOTE_STA_MAX);
 }
+
 struct aml_sta *aml_get_sta(struct aml_hw *aml_hw, const u8 *mac_addr);
+
+static inline struct aml_sta *aml_sta_get(struct aml_hw *aml_hw, u8 sta_id)
+{
+    struct aml_sta *sta = &aml_hw->sta_table[sta_id];
+
+    if (WARN_ON(sta_id >= (NX_REMOTE_STA_MAX + NX_VIRT_DEV_MAX)))
+        return NULL;
+    if (!sta->valid)    /* if recovering or disconnected */
+        return NULL;
+
+    return sta;
+}
 
 static inline uint8_t master_vif_idx(struct aml_vif *vif)
 {
@@ -1102,5 +1144,17 @@ int aml_cfg80211_add_key(struct wiphy *wiphy, struct net_device *netdev,
         u8 key_index, bool pairwise, const u8 *mac_addr,
 #endif
         struct key_params *params);
+
+void aml_sta_deinit(struct aml_hw *aml_hw, struct aml_sta *aml_sta);
+
+static inline void aml_sdio_usb_host_reorder_detected(struct aml_hw *aml_hw)
+{
+#ifdef CONFIG_AML_SDIO_USB_FW_REORDER
+    if (!aml_hw->aml_sdio_usb_host_reorder) {
+        aml_hw->aml_sdio_usb_host_reorder = true;
+        AML_INFO("=== enable host reorder ===\n");
+    }
+#endif
+}
 
 #endif /* _AML_DEFS_H_ */

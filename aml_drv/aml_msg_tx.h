@@ -16,6 +16,8 @@
 #include "aml_defs.h"
 #include "aml_mdns_offload.h"
 
+#define AML_SYNC_TRACE_MON_INTERVAL    (60 * HZ)
+
 extern unsigned char g_pci_shutdown;
 extern unsigned char g_pci_msg_suspend;
 int aml_send_reset(struct aml_hw *aml_hw);
@@ -229,7 +231,7 @@ int aml_tko_activate(struct aml_hw *aml_hw, struct aml_vif *vif, u8 active);
 int _aml_set_pt_calibration(struct aml_vif *aml_vif, int pt_cali_val);
 int aml_send_notify_ip(struct aml_vif *aml_vif,u8_l ip_ver,u8_l*ip_addr);
 int _aml_enable_wf(struct aml_vif *aml_vif, u32 addr);
-int aml_send_fwlog_cmd(struct aml_vif *aml_vif, int mode);
+int aml_send_fwlog_cmd(struct aml_hw *aml_hw, int mode);
 int aml_send_scc_conflict_notify(struct aml_vif *ap_vif, u8 sta_vif_idx, struct mm_scc_cfm *scc_cfm);
 int aml_send_sync_trace(struct aml_hw *aml_hw);
 int aml_send_dhcp_req(struct aml_hw *aml_hw, struct aml_vif *aml_vif, uint8_t work);
@@ -246,6 +248,7 @@ int _aml_fix_txpwr(struct aml_vif *aml_vif, int pwr);
 int _aml_set_usb_trace_enable(struct aml_hw *aml_hw, int value);
 int _aml_putv_trace_switch(struct aml_hw *aml_hw, int value);
 int _aml_set_la_enable(struct aml_hw *aml_hw, int value);
+int _aml_set_aggregation(struct aml_vif *aml_vif, int dir, int agg_num);
 int aml_set_rssi_reg(struct aml_vif *aml_vif, int flag);
 int aml_mdns_set_offload_state(struct aml_hw *aml_hw, int enable);
 int aml_mdns_reset_all(struct aml_hw *aml_hw);
@@ -258,5 +261,8 @@ int aml_mdns_get_reset_miss_counter(struct aml_hw *aml_hw);
 int aml_mdns_add_passthrough_list(struct aml_hw *aml_hw, uint8_t *qname, int length);
 int aml_mdns_remove_passthrough_list(struct aml_hw *aml_hw, uint8_t *qname, int length);
 int aml_mdns_set_passthrough_behavior(struct aml_hw *aml_hw, int behavior);
+int aml_set_mcc_ratio(struct aml_vif *aml_vif, int ratio);
+int aml_set_suspend_tx_flush(struct aml_hw *aml_hw, int tx_flush_enable);
+int aml_set_linkloss_threshold(struct aml_hw * aml_hw, int threshold);
 
 #endif /* _AML_MSG_TX_H_ */

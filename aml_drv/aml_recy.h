@@ -15,7 +15,7 @@
 
 #include "aml_defs.h"
 #include "lmac_mac.h"
-#include "wifi_debug.h"
+#include "aml_log.h"
 
 #ifdef CONFIG_AML_RECOVERY
 

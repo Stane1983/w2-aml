@@ -21,11 +21,12 @@ enum
 #define AML_SCC_SAVE_P2P_ACTION_LEN_DIFF(len_diff) (g_scc_p2p_len_diff = len_diff)
 #define AML_SCC_SET_P2P_PEER_5G_SUPPORT(support) (g_scc_p2p_peer_5g_support = support)
 #define AML_SCC_GET_P2P_PEER_5G_SUPPORT() (g_scc_p2p_peer_5g_support)
+#define MAX_P2P_SAVE_LEN 500
 
 extern u32 beacon_need_update;
 extern u8 g_scc_p2p_save[];
-extern u8 g_scc_p2p_len_before;
-extern u8 g_scc_p2p_len_diff;
+extern u32 g_scc_p2p_len_before;
+extern u32 g_scc_p2p_len_diff;
 extern bool g_scc_p2p_peer_5g_support;
 
 int aml_scc_change_beacon(struct aml_hw *aml_hw, struct aml_vif *vif);

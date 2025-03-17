@@ -7,6 +7,9 @@
  *
  ******************************************************************************
  */
+
+#define AML_MODULE   TX
+
 #include <linux/dma-mapping.h>
 #include <linux/etherdevice.h>
 #include <linux/ip.h>
@@ -25,7 +28,7 @@
 #include "aml_compat.h"
 #include "share_mem_map.h"
 #include "aml_utils.h"
-#include "wifi_debug.h"
+#include "aml_log.h"
 #include "sdio_common.h"
 #include "wifi_top_addr.h"
 #include "sg_common.h"
@@ -35,6 +38,8 @@
 #include "aml_platform.h"
 #endif
 #include "aml_scc.h"
+
+extern bool pt_mode;
 
 char sp_frame_status_trace[][25] = {
     "[SP FRAME TX] ",
@@ -247,7 +252,7 @@ void aml_ps_bh_traffic_req(struct aml_hw *aml_hw, struct aml_sta *sta,
             pkt_req = txq->credits;
         txq->push_limit = pkt_req;
         sta->ps.sp_cnt[ps_id] = pkt_req;
-        aml_txq_add_to_hw_list(txq);
+        aml_txq_start(txq, AML_TXQ_STOP_STA_PS);
     } else {
         int i, tid;
 
@@ -269,13 +274,13 @@ void aml_ps_bh_traffic_req(struct aml_hw *aml_hw, struct aml_sta *sta,
                 pkt_req -= txq_len;
                 txq->push_limit = txq_len;
                 sta->ps.sp_cnt[ps_id] += txq_len;
-                aml_txq_add_to_hw_list(txq);
+                aml_txq_start(txq, AML_TXQ_STOP_STA_PS);
             } else {
                 /* Enough pkt in this txq to comlete the request
                    add this txq to hwq list and stop processing txq */
                 txq->push_limit = pkt_req;
                 sta->ps.sp_cnt[ps_id] += pkt_req;
-                aml_txq_add_to_hw_list(txq);
+                aml_txq_start(txq, AML_TXQ_STOP_STA_PS);
                 break;
             }
         }
@@ -463,7 +468,7 @@ u16 aml_select_txq(struct aml_vif *aml_vif, struct sk_buff *skb)
 
         if (skb->protocol == cpu_to_be16(ETH_P_PAE)) {
             skb->priority = 7;
-            printk("%s: set eap frame to vo\n", __func__);
+            AML_INFO("set eap frame to vo\n");
         }
 
         txq = aml_txq_sta_get(sta, skb->priority, aml_hw);
@@ -477,7 +482,7 @@ u16 aml_select_txq(struct aml_vif *aml_vif, struct sk_buff *skb)
             rcu_read_unlock_bh();
             q = rcu_dereference_bh(netq->qdisc);
             if (count%10 == 0) {
-                printk("txq flag is not ok, need wait dev active.  flag: %x\n", q->flags);
+                AML_ERR("txq flag is not ok, need wait dev active.  flag: %x\n", q->flags);
             }
             msleep(10);
             count ++;
@@ -743,7 +748,7 @@ static void aml_tx_retry(struct aml_hw *aml_hw, struct sk_buff *skb,
         sw_txhdr->desc.api.host.sn_for_retry = status.sn;
 
         if (aml_bus_type != PCIE_MODE)
-            printk("%s, reuse sn = %d\n", __func__, status.sn);
+            AML_INFO("reuse sn = %d\n", status.sn);
     }
 
     txq->credits++;
@@ -957,7 +962,7 @@ static int aml_amsdu_add_subframe_header(struct aml_hw *aml_hw,
  *
  */
 static bool aml_amsdu_add_subframe(struct aml_hw *aml_hw, struct sk_buff *skb,
-                                    struct aml_sta *sta, struct aml_txq *txq)
+                                    struct aml_sta *sta, struct aml_txq *txq, bool sp_frame)
 {
     bool res = false;
     struct ethhdr *eth;
@@ -969,7 +974,7 @@ static bool aml_amsdu_add_subframe(struct aml_hw *aml_hw, struct sk_buff *skb,
     if (aml_bus_type == USB_MODE) {
         if (aml_hw->mod_params->amsdu_maxnb > 3)
             aml_hw->mod_params->amsdu_maxnb = 3; // USB limits the number of AMSDU aggregations, which can be sent in one BUF
-        //printk("%s txq->id:%d, txq->amsdu_len:%d\n", __func__, txq->idx, txq->amsdu_len);
+        //AML_INFO("%s txq->id:%d, txq->amsdu_len:%d\n", __func__, txq->idx, txq->amsdu_len);
     }
 #endif
     /* immediately return if amsdu are not allowed for this sta */
@@ -992,7 +997,7 @@ static bool aml_amsdu_add_subframe(struct aml_hw *aml_hw, struct sk_buff *skb,
             goto end;
         }
 
-        if ((sw_txhdr->desc.api.host.flags & TXU_CNTRL_SP_FRAME) ||
+        if (sp_frame || (sw_txhdr->desc.api.host.flags & TXU_CNTRL_SP_FRAME) ||
             ((sw_txhdr->amsdu.len + sw_txhdr->amsdu.pad +
               aml_amsdu_subframe_length(eth, skb->len)) > txq->amsdu_len) ||
             aml_amsdu_add_subframe_header(aml_hw, skb, sw_txhdr)) {
@@ -1019,7 +1024,7 @@ static bool aml_amsdu_add_subframe(struct aml_hw *aml_hw, struct sk_buff *skb,
         txhdr = (struct aml_txhdr *)skb_prev->data;
         sw_txhdr = txhdr->sw_hdr;
         if ((sw_txhdr->amsdu.len) ||
-            (sw_txhdr->desc.api.host.flags & TXU_CNTRL_RETRY) || (sw_txhdr->desc.api.host.flags & TXU_CNTRL_SP_FRAME))
+            (sw_txhdr->desc.api.host.flags & TXU_CNTRL_RETRY) || (sw_txhdr->desc.api.host.flags & TXU_CNTRL_SP_FRAME) || sp_frame)
             /* previous buffer is already a complete amsdu or a retry or special frame */
             goto end;
 
@@ -1255,12 +1260,13 @@ bool aml_filter_sp_data_frame(struct sk_buff *skb, struct aml_vif *aml_vif, AML_
     u8 str[200];
     u32 offset = 0;
     u8 *p = str;
+    u8 icmp_type;
 
     //filter eapol
     if (ethhdr->h_proto == htons(ETH_P_PAE)) {
         offset += sprintf(p + offset, sp_frame_status_trace[sp_status]);
         offset += sprintf(p + offset, "eapol,vif_idx:%d",aml_vif->vif_index);
-        printk("%s\n", p);
+        AML_INFO("%s\n", p);
         return true;
     }
 
@@ -1293,9 +1299,14 @@ bool aml_filter_sp_data_frame(struct sk_buff *skb, struct aml_vif *aml_vif, AML_
 
         if (((sp_status == SP_STATUS_RX) && (!memcmp(target_ip, &aml_vif->ipv4_addr, IPV4_ADDR_LEN)))
             || (sp_status != SP_STATUS_RX))
-            printk("%s\n", p);
+            AML_INFO("%s\n", p);
 
-        return false; // Solving the compatibility problem between w2 softap and mtk
+        if (aml_vif->wdev.iftype == NL80211_IFTYPE_AP) {
+            return false; // Solving the compatibility problem between w2 softap and mtk
+        }
+        else {
+            return true;
+        }
     }
 
     //filter dhcp
@@ -1307,6 +1318,14 @@ bool aml_filter_sp_data_frame(struct sk_buff *skb, struct aml_vif *aml_vif, AML_
         iphdrlen = sizeof(*ipv6hdr);
     } else if (ethhdr->h_proto == htons(ETH_P_IP)) {
         iphdr = (struct iphdr *)(skb->data + ETH_HDR_LEN);
+        //filter icmp
+        if ((iphdr->protocol == IPPROTO_ICMP) && (pt_mode != 1)/*(CMW500)pt_mode no use this process*/) {
+            icmp_type = *((u8 *)(skb->data + ETH_HDR_LEN + 20));
+            if (icmp_type == 0 || icmp_type == 8) {
+                return true; // ping go to sp frame
+            }
+        }
+
         /* check for udp header */
         if (iphdr->protocol != IPPROTO_UDP)
             return false;
@@ -1323,14 +1342,14 @@ bool aml_filter_sp_data_frame(struct sk_buff *skb, struct aml_vif *aml_vif, AML_
         if (is_dhcpv4 || is_dhcpv6) {
             offset += sprintf(p + offset, sp_frame_status_trace[sp_status]);
             offset += sprintf(p + offset, "DHCP[%d %d], vif_idx:%d", is_dhcpv4,is_dhcpv6, aml_vif->vif_index);
-            printk("%s\n", p);
+            AML_INFO("%s\n", p);
             return true;
         }
     }
     return false;
 }
 
-uint32_t aml_filter_sp_mgmt_frame(struct aml_vif *vif, u8 *buf, AML_SP_STATUS_E sp_status, u32 frame_len, u32* len_diff)
+uint32_t aml_filter_sp_mgmt_frame(struct aml_vif *vif, u8 *buf, AML_SP_STATUS_E sp_status, u32 frame_len, u32* len_diff, u64 cookie)
 {
     u32 offset = 0;
     u32 subtype = ((*buf) & IEEE80211_FCTL_STYPE) >> 4;
@@ -1345,40 +1364,60 @@ uint32_t aml_filter_sp_mgmt_frame(struct aml_vif *vif, u8 *buf, AML_SP_STATUS_E 
         case ACTION_TYPE: {
             offset += sprintf(p + offset, sp_frame_status_trace[sp_status]);
             category = *(buf + CATEGORY_OFFSET);
-            action_code = *(buf + ACTION_CODE_OFFSET);
-            oui_type = *(buf + OUI_TYPE_OFFSET);
-            oui_subtype = *(buf + OUI_SUBTYPE_OFFSET);
             if (category == PUBLIC_ACTION) {
+                action_code = *(buf + ACTION_CODE_OFFSET);
+                oui_type = *(buf + OUI_TYPE_OFFSET);
+                oui_subtype = *(buf + OUI_SUBTYPE_OFFSET);
                 if ((action_code == ACTION_CODE_VENDOR)
                     && (*(buf + OUI_OFFSET) == 0x50)
                     && (*(buf + OUI_OFFSET + 1) == 0x6f)
                     && (*(buf + OUI_OFFSET + 2) == 0x9a))
                 {
                     if (oui_type == OUI_TYPE_P2P) {
-                        offset += sprintf(p + offset, "PUBLIC ACTION->%s ", p2p_pub_action_trace[oui_subtype]);
+                        offset += sprintf(p + offset, "PUB ACT->%s ", p2p_pub_action_trace[oui_subtype]);
+
+                        if (cookie) {
+                            offset += sprintf(p + offset, " 0x%llx ", cookie);
+                        }
 
                         ret |= AML_P2P_ACTION_FRAME;
                         //P2P_ACTION_GO_NEG_RSP & P2P_ACTION_GO_NEG_CFM & P2P_ACTION_INVIT_RSP:need sw retry
                         if ((oui_subtype == P2P_ACTION_GO_NEG_RSP) || (oui_subtype == P2P_ACTION_GO_NEG_CFM) || (oui_subtype == P2P_ACTION_INVIT_RSP)) {
                             ret |= AML_SP_FRAME;
+                            if ((oui_subtype == P2P_ACTION_GO_NEG_CFM) || (oui_subtype == P2P_ACTION_INVIT_RSP)) {
+                                ret |= AML_MUST_TX_SUC;
+                            }
                         }
 #ifdef DRV_P2P_SCC_MODE
                         if ((sp_status == SP_STATUS_TX_START) && (len_diff != NULL)) {
                             if ((oui_subtype == P2P_ACTION_GO_NEG_REQ) || (oui_subtype == P2P_ACTION_INVIT_REQ))
                                 AML_SCC_SET_P2P_PEER_5G_SUPPORT(false); //rest 5g support flag
 
-                            if ((oui_subtype == P2P_ACTION_GO_NEG_REQ) || (oui_subtype == P2P_ACTION_GO_NEG_RSP) || (oui_subtype == P2P_ACTION_INVIT_REQ) || (oui_subtype == P2P_ACTION_INVIT_RSP)) {
+                            if ((oui_subtype == P2P_ACTION_GO_NEG_REQ) || (oui_subtype == P2P_ACTION_GO_NEG_RSP) || (oui_subtype == P2P_ACTION_INVIT_REQ)) {
                                 struct aml_vif *sta_vif ;
                                 sta_vif = vif->aml_hw->vif_table[0];
                                 if (sta_vif && sta_vif->sta.ap && (sta_vif->sta.ap->valid)) {
                                     struct cfg80211_chan_def target_chdef;
                                     target_chdef = vif->aml_hw->chanctx_table[sta_vif->ch_index].chan_def;
-                                    //AML_INFO("[P2P SCC] p2p channel to:%d", aml_ieee80211_freq_to_chan(target_chdef.chan->center_freq, target_chdef.chan->band));
-                                    AML_SCC_SAVE_P2P_ACTION_FRAME(buf, frame_len);
-                                    AML_SCC_SAVE_P2P_ACTION_LEN(frame_len);
-                                    aml_change_p2p_chanlist(vif, buf, frame_len, len_diff, target_chdef);
-                                    aml_change_p2p_operchan(vif, buf, frame_len, target_chdef);
-                                    AML_SCC_SAVE_P2P_ACTION_LEN_DIFF(*len_diff);
+                                    if ((target_chdef.chan->flags & IEEE80211_CHAN_RADAR)) {
+                                        AML_INFO("dfs chan, skip change ie");
+                                    }
+                                    else {
+                                        //AML_INFO("[P2P SCC] p2p channel to:%d", aml_ieee80211_freq_to_chan(target_chdef.chan->center_freq, target_chdef.chan->band));
+                                        if (frame_len > MAX_P2P_SAVE_LEN) {
+                                            AML_INFO("[P2P SCC] p2p frame len error:%d", frame_len);
+                                        }
+                                        else if (g_scc_p2p_len_before){
+                                            AML_INFO("[P2P SCC] p2p pre frame not cfm:%d", g_scc_p2p_len_before);
+                                        }
+                                        else {
+                                            AML_SCC_SAVE_P2P_ACTION_FRAME(buf, frame_len);
+                                            AML_SCC_SAVE_P2P_ACTION_LEN(frame_len);
+                                            aml_change_p2p_chanlist(vif, buf, frame_len, len_diff, target_chdef);
+                                            aml_change_p2p_operchan(vif, buf, frame_len, target_chdef);
+                                            AML_SCC_SAVE_P2P_ACTION_LEN_DIFF(*len_diff);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1389,6 +1428,7 @@ uint32_t aml_filter_sp_mgmt_frame(struct aml_vif *vif, u8 *buf, AML_SP_STATUS_E 
                             }
                         }
 #endif
+
 #if 0    //code for change p2p go intent
                         if ((oui_subtype == P2P_ACTION_GO_NEG_REQ) || (oui_subtype == P2P_ACTION_GO_NEG_RSP)) {
                             aml_change_p2p_intent(vif, buf, frame_len, frame_len_offset);
@@ -1399,6 +1439,9 @@ uint32_t aml_filter_sp_mgmt_frame(struct aml_vif *vif, u8 *buf, AML_SP_STATUS_E 
                             u8 dpp_action_subtype = *(buf + DPP_PUBLIC_ACTION_SUBTYPE_OFFSET);
                             offset += sprintf(p + offset, "DPP ACTION->%s ", dpp_pub_action_trace[dpp_action_subtype]);
                             ret |= AML_SP_FRAME | AML_DPP_ACTION_FRAME;
+                    }
+                    else {
+                        offset += sprintf(p + offset, "oui type:%d ", oui_type);
                     }
                 }
                 else if ((action_code == ACTION_GAS_INIT_REQ)
@@ -1427,39 +1470,45 @@ uint32_t aml_filter_sp_mgmt_frame(struct aml_vif *vif, u8 *buf, AML_SP_STATUS_E 
                 }
                 else if (action_code == WLAN_PUB_ACTION_EXT_CHANSW_ANN) {
                     ret |= AML_CSA_ACTION_FRAME;
+                    offset += sprintf(p + offset, "CSA ACTION", action_code);
                 }
+                else {
+                    offset += sprintf(p + offset, "action code:%d ", action_code);
+                }
+                p[offset] = '\0';
+                AML_INFO("%s\n", p);
             }
-            else if (category == P2P_ACTION) {
+            else if ((category == VENDOR_SPEC)
+                    && (*(buf + CATEGORY_OFFSET + 1) == 0x50)
+                    && (*(buf + CATEGORY_OFFSET + 2) == 0x6f)
+                    && (*(buf + CATEGORY_OFFSET + 3) == 0x9a)) {
+                oui_subtype = *(buf + CATEGORY_OFFSET + 5);
                 offset += sprintf(p + offset, "P2P ACTION->%s ", p2p_action_trace[oui_subtype]);
+                p[offset] = '\0';
+                AML_INFO("%s\n", p);
             }
-            else {
-                offset += sprintf(p + offset, "ACTION category %d ", category);
-            }
-            p[offset] = '\0';
 
-            printk("%s\n", p);
             return ret;
-            break;
         }
         case AUTH_TYPE: {
             u16 auth_algo = *(buf + AUTH_ALGO_OFFSET);
             ret |= AML_SP_FRAME;
             offset += sprintf(p + offset, sp_frame_status_trace[sp_status]);
-            offset += sprintf(p + offset, "auth algo:%d ", auth_algo);
+            offset += sprintf(p + offset, "vif:%d, auth algo:%d ", vif->vif_index, auth_algo);
             p[offset] = '\0';
-            printk("%s\n", p);
+            AML_INFO("%s\n", p);
             if ((AML_VIF_TYPE(vif) == NL80211_IFTYPE_STATION) && (vif->sta.flags & AML_STA_EXT_AUTH)) {
                 u8 *p = buf + AUTH_ALGO_OFFSET;
                 vif->sta.auth_status = (*(p + 4) | *(p + 5) << 8);
-                printk("auth status %d\n", vif->sta.auth_status);
+                AML_INFO("auth status %d\n", vif->sta.auth_status);
             }
             return ret;
         }
         case ASSOC_RSP_TYPE: {
             offset += sprintf(p + offset, sp_frame_status_trace[sp_status]);
-            offset += sprintf(p + offset, "ASSOC_RSP");
+            offset += sprintf(p + offset, "vif:%d, ASSOC_RSP", vif->vif_index);
             p[offset] = '\0';
-            printk("%s\n", p);
+            AML_INFO("%s\n", p);
             return ret;
         }
         case PROBE_RSP_TYPE: {
@@ -1599,7 +1648,7 @@ netdev_tx_t aml_start_xmit(struct sk_buff *skb, struct net_device *dev)
     if (aml_filter_sp_data_frame(skb,aml_vif,SP_STATUS_TX_START)) {
         sp_frame = true;
         txq = aml_txq_sta_get(sta, tid, aml_hw);
-        tid = 0xff;
+        //tid = 0xff;
     } else {
         txq = aml_txq_sta_get(sta, tid, aml_hw);
     }
@@ -1609,7 +1658,7 @@ netdev_tx_t aml_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 
 #ifdef CONFIG_AML_AMSDUS_TX
-    if (aml_amsdu_add_subframe(aml_hw, skb, sta, txq))
+    if (aml_amsdu_add_subframe(aml_hw, skb, sta, txq, sp_frame))
         return NETDEV_TX_OK;
 #endif
 
@@ -1689,7 +1738,7 @@ netdev_tx_t aml_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
     }
     if (aml_bus_type != PCIE_MODE) {
-        AML_PRINT(AML_DBG_MODULES_TX, "ethertype:0x%04x, credits:%d, tid:%d, vif_idx:%d\n",
+        AML_RLMT_DBG("ethertype:0x%04x, credits:%d, tid:%d, vif_idx:%d\n",
                 cpu_to_be16(desc->host.ethertype), txq->credits, desc->host.tid, desc->host.vif_idx);
     }
 
@@ -1697,7 +1746,7 @@ netdev_tx_t aml_start_xmit(struct sk_buff *skb, struct net_device *dev)
     spin_lock_bh(&aml_hw->tx_lock);
 
     if (txq->idx == TXQ_INACTIVE ) {
-        printk("%s:%d Get txq idx is inactive after spin_lock_bh  \n",__func__, __LINE__);
+        AML_INFO(" Get txq idx is inactive after spin_lock_bh  \n");
        //"do not push and process it with kernel list lib it whill be re-pull out and used this freed buf"
        spin_unlock_bh(&aml_hw->tx_lock);
        goto free;
@@ -1752,6 +1801,12 @@ int aml_start_mgmt_xmit(struct aml_vif *vif, struct aml_sta *sta,
     u32 sp_mgmt_ret;
     frame_len = params->len;
 
+#ifdef CONFIG_AML_RECOVERY
+    if (aml_recy != NULL && aml_recy_flags_chk(AML_RECY_IPC_ONGOING | AML_RECY_DROP_XMIT_PKT)) {
+        return -ENOMEM;
+    }
+#endif
+
     /* Set TID and Queues indexes */
     if (sta) {
         txq = aml_txq_sta_get(sta, 8, aml_hw);
@@ -1786,12 +1841,7 @@ int aml_start_mgmt_xmit(struct aml_vif *vif, struct aml_sta *sta,
         dev_kfree_skb(skb);
         return -ENOMEM;
     }
-#ifdef CONFIG_AML_RECOVERY
-    if (aml_recy != NULL && aml_recy_flags_chk(AML_RECY_IPC_ONGOING | AML_RECY_DROP_XMIT_PKT)) {
-        dev_kfree_skb(skb);
-        return -ENOMEM;
-    }
-#endif
+
 
     /* Reserve headroom in skb. Do this so that we can easily re-use ieee80211
        functions that take skb with 802.11 frame as parameter */
@@ -1801,7 +1851,7 @@ int aml_start_mgmt_xmit(struct aml_vif *vif, struct aml_sta *sta,
     /* Copy data in skb buffer */
     data = skb_put(skb, frame_len);
     memcpy(data, params->buf, frame_len);
-    sp_mgmt_ret = aml_filter_sp_mgmt_frame(vif, data, SP_STATUS_TX_START, frame_len, &len_diff);
+    sp_mgmt_ret = aml_filter_sp_mgmt_frame(vif, data, SP_STATUS_TX_START, frame_len, &len_diff, (u64)skb);
     if ((sp_mgmt_ret & AML_DPP_ACTION_FRAME) && offchan) {
 #ifdef CONFIG_AML_PREALLOC_BUF_STATIC
         txq = aml_hw->txq + NX_OFF_CHAN_TXQ_IDX;
@@ -1839,8 +1889,19 @@ int aml_start_mgmt_xmit(struct aml_vif *vif, struct aml_sta *sta,
 
     /* Prepare IPC buffer for DMA transfer */
     if (unlikely(aml_prep_dma_tx(aml_hw, sw_txhdr, data))) {
+        struct ieee80211_mgmt *mgmt = (void *)params->buf;
         kmem_cache_free(aml_hw->sw_txhdr_cache, sw_txhdr);
         dev_kfree_skb(skb);
+        if (ieee80211_is_action(mgmt->frame_control)) {
+            AML_INFO("report action tx status as ipc error");
+#ifdef DRV_P2P_SCC_MODE
+            if (sp_mgmt_ret & AML_P2P_ACTION_FRAME)
+                g_scc_p2p_len_before = 0;
+#endif
+            cfg80211_mgmt_tx_status(&(vif->wdev), *cookie, params->buf, params->len, 0, GFP_ATOMIC);
+            /* coverity[leaked_storage] - variable "sw_txhdr" was free in kmem_cache_free */
+            return 0;
+        }
         /* coverity[leaked_storage] - variable "sw_txhdr" was free in kmem_cache_free */
         return -EBUSY;
     }
@@ -1893,6 +1954,10 @@ int aml_start_mgmt_xmit(struct aml_vif *vif, struct aml_sta *sta,
         spin_unlock_bh(&aml_hw->tx_lock);
         if (ieee80211_is_action(mgmt->frame_control)) {
             AML_INFO("report action tx status as txq inactive");
+#ifdef DRV_P2P_SCC_MODE
+            if (sp_mgmt_ret & AML_P2P_ACTION_FRAME)
+                g_scc_p2p_len_before = 0;
+#endif
             cfg80211_mgmt_tx_status(&(vif->wdev), *cookie, params->buf, params->len, 0, GFP_ATOMIC);
             return 0;
         }
@@ -1937,7 +2002,7 @@ int aml_update_tx_cfm(void *pthis)
     if (aml_bus_type == USB_MODE) {
         ret = usb_bulk_msg(aml_hw->plat->usb_dev, usb_rcvbulkpipe(aml_hw->plat->usb_dev, USB_EP5), (void *)read_cfm, sizeof(struct tx_sdio_usb_cfm_tag) * (SRAM_TXCFM_CNT), &actual_length, 100);
         if (ret)
-            printk("usb bulk failed actual len is %d\n",actual_length);
+            AML_INFO("usb bulk failed actual len is %d\n",actual_length);
     } else if (aml_bus_type == SDIO_MODE) {
 #ifdef CONFIG_SDIO_TX_ENH
         if (aml_hw->txcfm_param.dyn_en) {
@@ -2077,18 +2142,14 @@ int aml_tx_cfm_task(void *data)
     unsigned int frame_tot_len = 0;
     struct txdesc_host *txdesc_host = NULL;
     unsigned char  page_num = 0;
-    struct sched_param sch_param;
     uint32_t sp_ret = 0;
 
-    sch_param.sched_priority = 91;
-#ifndef CONFIG_PT_MODE
-    sched_setscheduler(current, SCHED_FIFO, &sch_param);
-#endif
+    aml_sched_rt_set(SCHED_FIFO, AML_TASK_PRI);
     while (!aml_hw->aml_txcfm_task_quit) {
         /* wait for work */
         if (down_interruptible(&aml_hw->aml_txcfm_sem) != 0) {
             /* interrupted, exit */
-            AML_PRINT(AML_DBG_MODULES_TX, "wait aml_txcfm_sem fail!\n");
+            AML_RLMT_DBG("wait aml_txcfm_sem fail!\n");
             break;
         }
         if (aml_hw->aml_txcfm_task_quit) {
@@ -2170,7 +2231,7 @@ int aml_tx_cfm_task(void *data)
 #endif
 #endif
             spin_unlock_bh(&aml_hw->tx_buf_lock);
-            AML_PRINT(AML_DBG_MODULES_TX, "%s, tx_page_free_num=%d, credit=%d, pagenum=%d, skb=%p, cfm.credits=%d, drv_txcfm_idx=%d\n", __func__, aml_hw->g_tx_param.tx_page_free_num, txq->credits, page_num, skb, cfm.credits, drv_txcfm_idx);
+            AML_RLMT_DBG("tx_page_free_num=%d, credit=%d, pagenum=%d, skb=%p, cfm.credits=%d, drv_txcfm_idx=%d\n", aml_hw->g_tx_param.tx_page_free_num, txq->credits, page_num, skb, cfm.credits, drv_txcfm_idx);
             if (aml_hw->g_tx_param.tx_page_free_num >= aml_hw->g_tx_param.txcfm_trigger_tx_thr) {
                 up(&aml_hw->aml_tx_sem);
             }
@@ -2196,16 +2257,23 @@ int aml_tx_cfm_task(void *data)
                 }
 
                 if (ieee80211_is_action(mgmt->frame_control)) {
-                    sp_ret = aml_filter_sp_mgmt_frame(sw_txhdr->aml_vif, (u8*)mgmt, cfm.status.acknowledged ? SP_STATUS_TX_SUC:SP_STATUS_TX_FAIL, 0, &(sw_txhdr->frame_len));
+                    sp_ret = aml_filter_sp_mgmt_frame(sw_txhdr->aml_vif, (u8*)mgmt, cfm.status.acknowledged ? SP_STATUS_TX_SUC:SP_STATUS_TX_FAIL, 0, &(sw_txhdr->frame_len), (u64)skb);
                     if (sp_ret & AML_CSA_ACTION_FRAME) {
                         AML_INFO("csa action send cfm, status:%d", cfm.status.acknowledged);
                     }
                 }
 
-                if (!cfm.status.acknowledged && (sp_ret & AML_GAS_ACTION_FRAME) && aml_hw->roc && (txq->idx != TXQ_INACTIVE)) {
-                    AML_INFO("retry GAS frame during roc");
-                    aml_tx_retry(aml_hw, skb, sw_txhdr, cfm.status);
-                    continue;
+                if (!cfm.status.acknowledged
+                    && ((sp_ret & AML_GAS_ACTION_FRAME) || (sp_ret & AML_MUST_TX_SUC))
+                    && (txq->idx != TXQ_INACTIVE)) {
+                    spin_lock_bh(&aml_hw->roc_lock);
+                    if (aml_hw->roc) {
+                        spin_unlock_bh(&aml_hw->roc_lock);
+                        AML_INFO("retry frame during roc:0x%x", sp_ret);
+                        aml_tx_retry(aml_hw, skb, sw_txhdr, cfm.status);
+                        continue;
+                    }
+                    spin_unlock_bh(&aml_hw->roc_lock);
                 }
 
                 if (cfm.status.acknowledged && (sp_ret & AML_GAS_INIT_REQ_FRAME)) {
@@ -2249,7 +2317,7 @@ int aml_tx_cfm_task(void *data)
 
                 /* continue service period */
                 if (unlikely(txq->push_limit && !aml_txq_is_full(txq))) {
-                    aml_txq_add_to_hw_list(txq);
+                    aml_txq_start(txq, AML_TXQ_STOP_FULL);
                 }
             }
             /* coverity[result_independent_of_operands] - Enhance code robustness */
@@ -2292,6 +2360,11 @@ int aml_tx_cfm_task(void *data)
                 skb_pull(skb, AML_SDIO_TX_HEADROOM);
             } else {
                 skb_pull(skb, AML_USB_TX_HEADROOM);
+            }
+
+            if (timer_pending(&aml_hw->txq_cleanup))
+            {
+                mod_timer(&aml_hw->txq_cleanup, jiffies + AML_TXQ_CLEANUP_INTERVAL);
             }
 
             consume_skb(skb);
@@ -2365,14 +2438,17 @@ int aml_txdatacfm(void *pthis, void *arg)
             sw_txhdr->aml_vif->is_disconnect = 0;
         }
         if (ieee80211_is_action(mgmt->frame_control)) {
-            sp_ret = aml_filter_sp_mgmt_frame(sw_txhdr->aml_vif, (u8*)mgmt, cfm->status.acknowledged ? SP_STATUS_TX_SUC:SP_STATUS_TX_FAIL, 0, &(sw_txhdr->frame_len));
+            sp_ret = aml_filter_sp_mgmt_frame(sw_txhdr->aml_vif, (u8*)mgmt, cfm->status.acknowledged ? SP_STATUS_TX_SUC:SP_STATUS_TX_FAIL, 0, &(sw_txhdr->frame_len), (u64)skb);
             if (sp_ret & AML_CSA_ACTION_FRAME) {
                 AML_INFO("csa action send cfm, status:%d", cfm->status.acknowledged);
             }
         }
 
-        if (!cfm->status.acknowledged && (sp_ret & AML_GAS_ACTION_FRAME) && aml_hw->roc && (txq->idx != TXQ_INACTIVE)) {
-            AML_INFO("retry GAS frame during roc");
+        if (!cfm->status.acknowledged
+            && ((sp_ret & AML_GAS_ACTION_FRAME) || (sp_ret & AML_MUST_TX_SUC))
+            && aml_hw->roc
+            && (txq->idx != TXQ_INACTIVE)) {
+            AML_INFO("retry frame during roc:0x%x", sp_ret);
             aml_tx_retry(aml_hw, skb, sw_txhdr, cfm->status);
             return 0;
         }
@@ -2418,7 +2494,7 @@ int aml_txdatacfm(void *pthis, void *arg)
 
         /* continue service period */
         if (unlikely(txq->push_limit && !aml_txq_is_full(txq))) {
-            aml_txq_add_to_hw_list(txq);
+            aml_txq_start(txq, AML_TXQ_STOP_FULL);
         }
     }
     /* coverity[result_independent_of_operands] - Enhance code robustness */
@@ -2556,4 +2632,3 @@ void aml_tx_cfm_wait_rsp(struct aml_hw *aml_hw, bool ack, u8* func, u32 line)
     vif->tx_cfm_wait.cookie = 0;
     AML_INFO("ack:%d, [%s %d]", ack, func, line);
 }
-

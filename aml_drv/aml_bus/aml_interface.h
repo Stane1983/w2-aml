@@ -23,7 +23,9 @@ struct aml_pm_type {
     atomic_t drv_suspend_cnt;
     atomic_t is_shut_down;
     atomic_t wifi_enable;
+    atomic_t wifi_suspend_state;
 };
 
+typedef void (*bt_shutdown_func)(void);
 typedef void (*lp_shutdown_func)(void);
 #endif

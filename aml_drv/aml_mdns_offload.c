@@ -9,6 +9,7 @@
 *
 ****************************************************************************************
 */
+#define AML_MODULE  MDNS
 
 #include "aml_mdns_offload.h"
 #include "lmac_msg.h"
@@ -35,13 +36,13 @@ static u32_boolean setOffloadState(struct aml_hw *aml_hw, u32_boolean enabled)
     }
     ret = true;
 #else
-    printk("%s: MDNS_OFFLOAD_FEATURE is disabled!\n", __func__);
+    AML_ERR(" MDNS_OFFLOAD_FEATURE is disabled!\n");
     aml_mdns_set_offload_state(aml_hw, 0);
     ret = false;
 #endif
 
 exit:
-    printk("%s: enabled:%d,ret:%d\n", __func__, enabled, ret);
+    AML_ERR(" enabled:%d,ret:%d\n", enabled, ret);
     return ret;
 }
 
@@ -73,7 +74,7 @@ static int addProtocolResponses(struct aml_hw *aml_hw, char *networkInterface,
     }
     else
     {
-        printk("%s mdns frame size err\n", __func__);
+        AML_ERR(" mdns frame size err\n");
     }
 
     return index;

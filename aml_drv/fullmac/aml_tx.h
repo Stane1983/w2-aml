@@ -69,7 +69,7 @@
 #define ASSOC_RSP_TYPE          0X01
 
 #define PUBLIC_ACTION           0x04
-#define P2P_ACTION              0x7f
+#define VENDOR_SPEC             0x7f
 #define OUI_TYPE_P2P            0x09
 #define OUI_TYPE_DPP            0x1a
 
@@ -220,6 +220,7 @@ enum {
     AML_GAS_ACTION_FRAME = BIT(4),
     AML_GAS_INIT_REQ_FRAME = BIT(5),
     AML_GAS_INIT_RSP_FRAME = BIT(6),
+    AML_MUST_TX_SUC = BIT(7),
 };
 
 /**
@@ -320,6 +321,6 @@ int aml_sdio_tx_task(void *data);
 bool aml_filter_sp_data_frame(struct sk_buff *skb,struct aml_vif *aml_vif,AML_SP_STATUS_E sp_status);
 int aml_prep_dma_tx(struct aml_hw *aml_hw, struct aml_sw_txhdr *sw_txhdr, void *frame_start);
 void aml_tx_cfm_wait_rsp(struct aml_hw *aml_hw, bool ack, u8* func, u32 line);
-uint32_t aml_filter_sp_mgmt_frame(struct aml_vif *vif, u8 *buf, AML_SP_STATUS_E sp_status, u32 frame_len, u32* len_diff);
+uint32_t aml_filter_sp_mgmt_frame(struct aml_vif *vif, u8 *buf, AML_SP_STATUS_E sp_status, u32 frame_len, u32* len_diff, u64 cookie);
 
 #endif /* _AML_TX_H_ */
