@@ -1,6 +1,6 @@
 #define AML_VERS_REV "47086a67"
-#define AML_VERS_MOD "v2.0.0_2025-03.17-w2u driver:47086a67"
-#define AML_VERS_BANNER "v2.0.0_2025-03.17-w2u driver:47086a67"
+#define AML_VERS_MOD "v2.0.1_2025-03.17-w2u driver:47086a67+529191"
+#define AML_VERS_BANNER "v2.0.1_2025-03.17-w2u driver:47086a67+529191"
 #define AML_DRIVER_COMPILE_INFO "driver compile date: W2.2025.W11.01,driver hash: 47086a67978d87ca5a349b9c8e7c1fea49d5e97d"
 #define FIRMWARE_INFO "fw compile date: 2025-03-17 16:14:15,fw hash: 47086a67978d87ca5a349b9c8e7c1fea49d5e97d,fw size: 1843020"
 #define COMMON_INFO "common: last commit: 2024/Dec/10 18:47:29  hash: 47b5babe22ab5adf190b5d78bbad1cd950ddca3c"
