@@ -1308,7 +1308,18 @@ bool aml_filter_sp_data_frame(struct sk_buff *skb, struct aml_vif *aml_vif, AML_
             return true;
         }
     }
+#if 0
+    // debug 8010 port pkt print
+    if (ethhdr->h_proto == htons(ETH_P_IP)) {
+        iphdr = (struct iphdr *)(skb->data + ETH_HDR_LEN);
+        iphdrlen = iphdr->ihl * 4;
 
+        struct tcphdr *tcphdr = (struct tcphdr *)(skb->data + ETH_HDR_LEN + iphdrlen);
+        if ((ntohs(tcphdr->source) == 0x1f4a) || (ntohs(tcphdr->dest) == 0x1f4a)) {
+            AML_INFO("8010 %s, ip.id:%08x", sp_frame_status_trace[sp_status],	ntohs(iphdr->id));
+        }
+    }
+#endif
     //filter dhcp
     if (ethhdr->h_proto == htons(ETH_P_IPV6)) {
         ipv6hdr = (struct ipv6hdr *)(skb->data + ETH_HDR_LEN);

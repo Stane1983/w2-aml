@@ -5473,14 +5473,12 @@ static int aml_ps_wow_suspend_sta(struct aml_hw *aml_hw, struct aml_vif *aml_vif
                 return ret;
             }
         }
-        if (aml_hw->google_cast == 1)
-            filter |= WOW_FILTER_OPTION_GOOGLE_CAST_EN;
+
 #ifdef AML_WOW_GOOGLE_CAST_EN
-        else
-            filter |= WOW_FILTER_OPTION_GOOGLE_CAST_EN;
+        filter |= WOW_FILTER_OPTION_GOOGLE_CAST_EN;
 #endif
 #ifdef AML_WOW_MAGIC_PACKET_EN
-            filter |= WOW_FILTER_OPTION_MAGIC_PACKET;
+        filter |= WOW_FILTER_OPTION_MAGIC_PACKET;
 #endif
         aml_vif->filter = filter;
         ret = aml_send_dhcp_req(aml_hw, aml_vif, 1);
@@ -5559,6 +5557,7 @@ static int aml_ps_wow_suspend(struct aml_hw *aml_hw, struct cfg80211_wowlan *wow
     unsigned int reg_value;
     enum nl80211_iftype iftype;
     int ret;
+    unsigned int filter = 0;
 
     if ((ret = aml_ps_wow_suspend_check(aml_hw)) != 0)
         return ret;
@@ -5575,6 +5574,7 @@ static int aml_ps_wow_suspend(struct aml_hw *aml_hw, struct cfg80211_wowlan *wow
         if (iftype == NL80211_IFTYPE_STATION) {
             if ((ret = aml_ps_wow_suspend_sta(aml_hw, aml_vif, wow)) != 0)
                 goto err;
+            filter = aml_vif->filter;
         }
     }
 
@@ -5592,7 +5592,7 @@ static int aml_ps_wow_suspend(struct aml_hw *aml_hw, struct cfg80211_wowlan *wow
     }
 
     aml_hw->state = WIFI_SUSPEND_STATE_WOW;
-    ret = aml_send_suspend_req(aml_hw, aml_vif->filter, WIFI_SUSPEND_STATE_WOW);
+    ret = aml_send_suspend_req(aml_hw, filter, WIFI_SUSPEND_STATE_WOW);
     if (ret) {
         goto err;
     }
