@@ -1936,29 +1936,29 @@ static void aml_trigger_rst_rxd(struct aml_hw *aml_hw, uint32_t addr_rst, uint32
                 AML_REG_WRITE(RXBUF_START_ADDR & 0x1FFFF, aml_hw->plat, 0, RG_WIFI_IF_FW2HST_IRQ_CFG);
         }
         aml_dynamic_update_tx_page(aml_hw);
-        addr_rst |= RX_REDUCE_READ_RX_DATA_FINSH;
+        addr_rst |= RX_REDUCE_READ_RX_DATA_FINISH;
         AML_INFO("reduce last_addr = %x, addr_rst = %x", last_addr, addr_rst);
     }
 
-    if (aml_hw->rx_buf_state & BUFFER_REDUCE_FINSH) {
+    if (aml_hw->rx_buf_state & BUFFER_REDUCE_FINISH) {
         /* Host rx reduce had finished, notify the firmware */
-        addr_rst |= HOST_RXBUF_REDUCE_FINSH;
+        addr_rst |= HOST_RXBUF_REDUCE_FINISH;
         AML_INFO("reduce finsh last_addr = %x, addr_rst = %x", last_addr, addr_rst);
-        aml_hw->rx_buf_state &= ~BUFFER_REDUCE_FINSH;
+        aml_hw->rx_buf_state &= ~BUFFER_REDUCE_FINISH;
     }
 
     if ((aml_hw->rx_buf_state & BUFFER_STATUS) && (aml_hw->rx_buf_state & BUFFER_EXPAND)) {
         /* Host had read away all the data before hw_wr addr, update host tx_page_free_num */
         aml_dynamic_update_tx_page(aml_hw);
-        addr_rst |= RX_ENLARGE_READ_RX_DATA_FINSH;
+        addr_rst |= RX_ENLARGE_READ_RX_DATA_FINISH;
         AML_INFO("expend last_addr = %x, addr_rst = %x", last_addr, addr_rst);
     }
 
-    if (aml_hw->rx_buf_state & BUFFER_EXPEND_FINSH) {
+    if (aml_hw->rx_buf_state & BUFFER_EXPEND_FINISH) {
         /* Host rx expend had finished, notify the firmware */
-        addr_rst |= HOST_RXBUF_ENLARGE_FINSH;
+        addr_rst |= HOST_RXBUF_ENLARGE_FINISH;
         AML_INFO("expend finsh last_addr = %x, addr_rst = %x", last_addr, addr_rst);
-        aml_hw->rx_buf_state &= ~BUFFER_EXPEND_FINSH;
+        aml_hw->rx_buf_state &= ~BUFFER_EXPEND_FINISH;
     }
 
     cmd_buf[0] = 1;
@@ -2012,7 +2012,7 @@ static void aml_sdio_usb_dynamic_buffer_check(struct aml_hw *aml_hw)
             }
             aml_hw->rx_buf_state &= ~(BUFFER_STATUS);
             aml_hw->rx_buf_state &= ~(BUFFER_UPDATE_FLAG);
-            aml_hw->rx_buf_state |= BUFFER_REDUCE_FINSH;
+            aml_hw->rx_buf_state |= BUFFER_REDUCE_FINISH;
             AML_INFO("reduce_finish rx_buf_state = %x\n", aml_hw->rx_buf_state);
         } else if (aml_hw->rx_buf_state & BUFFER_EXPAND) {
             AML_INFO("expend fw_new_pos=%x, fw_buf_pos=%x\n",
@@ -2039,7 +2039,7 @@ static void aml_sdio_usb_dynamic_buffer_check(struct aml_hw *aml_hw)
 
             aml_hw->rx_buf_state &= ~(BUFFER_STATUS);
             aml_hw->rx_buf_state &= ~(BUFFER_UPDATE_FLAG);
-            aml_hw->rx_buf_state |= BUFFER_EXPEND_FINSH;
+            aml_hw->rx_buf_state |= BUFFER_EXPEND_FINISH;
             AML_INFO("enlarge_finish rx_buf_state = %x\n", aml_hw->rx_buf_state);
         }
     }

@@ -1,4 +1,4 @@
-AML_VERS_NUM=v2.0.1_2025-03.17-w2u driver:47086a67+529191
+AML_VERS_NUM=v2.0.2_2025-05.14-w2 driver:7015868c
 #KERNELDIR=/usr/lib/modules/5.8.0-63-generic/build
 PWD=$(shell pwd)
 ifeq ($(ARCH),)
@@ -176,7 +176,7 @@ ifeq ($(CONFIG_ANDROID_GKI),y)
 subdir-ccflags-y += -DCONFIG_ANDROID_GKI
 endif
 
-ifeq ($(CONFIG_AML_ANDROID),14)
+ifneq ($(CONFIG_AML_ANDROID),)
 subdir-ccflags-y += -DCONFIG_AML_ANDROID=$(CONFIG_AML_ANDROID)
 endif
 

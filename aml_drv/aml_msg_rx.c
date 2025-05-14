@@ -934,7 +934,7 @@ static inline int aml_rx_scanu_start_cfm(struct aml_hw *aml_hw,
                                           struct aml_cmd *cmd,
                                           struct ipc_e2a_msg *msg)
 {
-    AML_INFO(AML_FN_ENTRY_STR);
+    AML_INFO("%s, cur_chan:%d", __func__, aml_hw->cur_chanctx);
 
     aml_ipc_buf_dealloc(aml_hw, &aml_hw->scan_ie);
     spin_lock_bh(&aml_hw->scan_req_lock);
@@ -2085,7 +2085,8 @@ static int aml_resume_sync_rxbuf_ptr(struct aml_hw *aml_hw,
 
     aml_hw->fw_buf_pos  = ind->hw_rd;
     AML_INFO("resume update fw_buf_pos = %x\n", aml_hw->fw_buf_pos);
-    update_rxptr = RXBUF_PTR_UPDATE_DONE;
+    if (update_rxptr == RXBUF_PTR_UPDATE_WAIT)
+        update_rxptr = RXBUF_PTR_UPDATE_DONE;
 
     return 0;
 }

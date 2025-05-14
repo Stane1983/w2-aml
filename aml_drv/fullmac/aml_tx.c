@@ -1308,18 +1308,11 @@ bool aml_filter_sp_data_frame(struct sk_buff *skb, struct aml_vif *aml_vif, AML_
             return true;
         }
     }
-#if 0
-    // debug 8010 port pkt print
-    if (ethhdr->h_proto == htons(ETH_P_IP)) {
-        iphdr = (struct iphdr *)(skb->data + ETH_HDR_LEN);
-        iphdrlen = iphdr->ihl * 4;
 
-        struct tcphdr *tcphdr = (struct tcphdr *)(skb->data + ETH_HDR_LEN + iphdrlen);
-        if ((ntohs(tcphdr->source) == 0x1f4a) || (ntohs(tcphdr->dest) == 0x1f4a)) {
-            AML_INFO("8010 %s, ip.id:%08x", sp_frame_status_trace[sp_status],	ntohs(iphdr->id));
-        }
-    }
-#endif
+    //wfd rtsp frame
+    if (aml_filter_rtsp_frame(aml_vif, skb->len, skb->data, sp_status))
+        return true;
+
     //filter dhcp
     if (ethhdr->h_proto == htons(ETH_P_IPV6)) {
         ipv6hdr = (struct ipv6hdr *)(skb->data + ETH_HDR_LEN);
@@ -1392,9 +1385,19 @@ uint32_t aml_filter_sp_mgmt_frame(struct aml_vif *vif, u8 *buf, AML_SP_STATUS_E 
                         }
 
                         ret |= AML_P2P_ACTION_FRAME;
+
+                        if ((oui_subtype != P2P_ACTION_GO_NEG_CFM) && (oui_subtype != P2P_ACTION_INVIT_RSP)) {
+                            ret |= AML_REPORT_NO_ACKED;
+                        }
+
                         //P2P_ACTION_GO_NEG_RSP & P2P_ACTION_GO_NEG_CFM & P2P_ACTION_INVIT_RSP:need sw retry
-                        if ((oui_subtype == P2P_ACTION_GO_NEG_RSP) || (oui_subtype == P2P_ACTION_GO_NEG_CFM) || (oui_subtype == P2P_ACTION_INVIT_RSP)) {
+                        if ((oui_subtype == P2P_ACTION_GO_NEG_RSP)
+                            || (oui_subtype == P2P_ACTION_GO_NEG_CFM)
+                            || (oui_subtype == P2P_ACTION_INVIT_RSP)
+                            || (oui_subtype == P2P_ACTION_INVIT_REQ)
+                            || (oui_subtype == P2P_ACTION_GO_NEG_REQ)) {
                             ret |= AML_SP_FRAME;
+
                             if ((oui_subtype == P2P_ACTION_GO_NEG_CFM) || (oui_subtype == P2P_ACTION_INVIT_RSP)) {
                                 ret |= AML_MUST_TX_SUC;
                             }
@@ -1525,6 +1528,12 @@ uint32_t aml_filter_sp_mgmt_frame(struct aml_vif *vif, u8 *buf, AML_SP_STATUS_E 
         case PROBE_RSP_TYPE: {
             if (sp_status == SP_STATUS_TX_START) {
                 aml_scc_save_probe_rsp(vif, (u8*)buf, frame_len);
+            }
+
+            if (vif->vif_index == AML_P2P_DEVICE_VIF_IDX) {
+                if (aml_get_p2p_ie_offset(buf, frame_len, MAC_SHORT_MAC_HDR_LEN + PROBE_RSP_HDR_LEN)) {
+                    vif->aml_hw->wfd_present = true;
+                }
             }
             return ret;
         }
@@ -1847,7 +1856,7 @@ int aml_start_mgmt_xmit(struct aml_vif *vif, struct aml_sta *sta,
         return -ENOMEM;
     *cookie = (unsigned long)skb;
 
-    sw_txhdr = kmem_cache_alloc(aml_hw->sw_txhdr_cache, GFP_ATOMIC);
+    sw_txhdr = kmem_cache_zalloc(aml_hw->sw_txhdr_cache, GFP_ATOMIC);
     if (unlikely(sw_txhdr == NULL)) {
         dev_kfree_skb(skb);
         return -ENOMEM;
@@ -2278,7 +2287,7 @@ int aml_tx_cfm_task(void *data)
                     && ((sp_ret & AML_GAS_ACTION_FRAME) || (sp_ret & AML_MUST_TX_SUC))
                     && (txq->idx != TXQ_INACTIVE)) {
                     spin_lock_bh(&aml_hw->roc_lock);
-                    if (aml_hw->roc) {
+                    if (aml_hw->roc && (jiffies_to_msecs(jiffies - aml_hw->roc->start_time) <= aml_hw->roc->duration)) {
                         spin_unlock_bh(&aml_hw->roc_lock);
                         AML_INFO("retry frame during roc:0x%x", sp_ret);
                         aml_tx_retry(aml_hw, skb, sw_txhdr, cfm.status);
@@ -2303,7 +2312,7 @@ int aml_tx_cfm_task(void *data)
                     cfg80211_mgmt_tx_status(&sw_txhdr->aml_vif->wdev,
                                         (unsigned long)skb, skb_mac_header(skb),
                                         sw_txhdr->frame_len,
-                                        (sp_ret & AML_P2P_ACTION_FRAME) ? 0 : cfm.status.acknowledged,
+                                        (sp_ret & AML_REPORT_NO_ACKED) ? 0 : cfm.status.acknowledged,
                                         GFP_ATOMIC);
                 }
                 sp_ret = 0;
@@ -2457,11 +2466,15 @@ int aml_txdatacfm(void *pthis, void *arg)
 
         if (!cfm->status.acknowledged
             && ((sp_ret & AML_GAS_ACTION_FRAME) || (sp_ret & AML_MUST_TX_SUC))
-            && aml_hw->roc
             && (txq->idx != TXQ_INACTIVE)) {
-            AML_INFO("retry frame during roc:0x%x", sp_ret);
-            aml_tx_retry(aml_hw, skb, sw_txhdr, cfm->status);
-            return 0;
+            spin_lock_bh(&aml_hw->roc_lock);
+            if (aml_hw->roc && (jiffies_to_msecs(jiffies - aml_hw->roc->start_time) <= aml_hw->roc->duration)) {
+                spin_unlock_bh(&aml_hw->roc_lock);
+                AML_INFO("retry frame during roc:0x%x", sp_ret);
+                aml_tx_retry(aml_hw, skb, sw_txhdr, cfm->status);
+                return 0;
+            }
+            spin_unlock_bh(&aml_hw->roc_lock);
         }
 
         if (cfm->status.acknowledged && (sp_ret & AML_GAS_INIT_REQ_FRAME)) {
@@ -2480,7 +2493,7 @@ int aml_txdatacfm(void *pthis, void *arg)
             cfg80211_mgmt_tx_status(&sw_txhdr->aml_vif->wdev,
                                     (unsigned long)skb, skb_mac_header(skb),
                                     sw_txhdr->frame_len,
-                                    (sp_ret & AML_P2P_ACTION_FRAME) ? 0 : cfm->status.acknowledged,
+                                    (sp_ret & AML_REPORT_NO_ACKED) ? 0 : cfm->status.acknowledged,
                                     GFP_ATOMIC);
         }
     } else if ((txq->idx != TXQ_INACTIVE) && cfm->status.sw_retry_required) {

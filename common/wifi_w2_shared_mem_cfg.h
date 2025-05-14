@@ -28,14 +28,16 @@
 
 #define TXLBUF_TAG_SDIO_2                (0x600163e0) /* size 0x1964 */
 #define HW_RXBUF2_START_ADDR             (0x60019944) /* size 0x2BC */
-#define HW_RXBUF1_START_ADDR             (0x60019C00)
+#define HW_RXBUF1_START_ADDR             (0x6001B400)
+
 /*
 LA OFF: rx buffer large size 0x40000, small size: 0x20000;
 LA ON: rx buffer large size 0x30000, small size: 0x20000
 */
 
 #define TXLBUF_TAG_SDIO_4                (0x60017d44) /* size 0x1c00*/
-#define RXBUF_START_ADDR                 (0x60019C00)
+#define BUF_FOR_SUSPEND_USE_ADDR         (0x60019C00) /* size 2k */
+#define RXBUF_START_ADDR                 (0x6001B400) /* size 6k for offload */
 
 
 #define TXBUF_START_ADDR                 (0x60040000)
@@ -137,10 +139,10 @@ extern struct sdio_buffer_control sdio_buffer_ctrl;
 #define BUFFER_LA_FREE             BIT(14)
 #define BUFFER_TRACE_FREE          BIT(15)
 
-#define RX_ENLARGE_READ_RX_DATA_FINSH BIT(25)
-#define HOST_RXBUF_ENLARGE_FINSH      BIT(26)
-#define RX_REDUCE_READ_RX_DATA_FINSH  BIT(27)
-#define HOST_RXBUF_REDUCE_FINSH       BIT(28)
+#define RX_ENLARGE_READ_RX_DATA_FINISH BIT(25)
+#define HOST_RXBUF_ENLARGE_FINISH      BIT(26)
+#define RX_REDUCE_READ_RX_DATA_FINISH  BIT(27)
+#define HOST_RXBUF_REDUCE_FINISH       BIT(28)
 
 #define FW_BUFFER_STATUS   (BIT(20) | BIT(21))
 #define FW_BUFFER_NARROW   BIT(20)

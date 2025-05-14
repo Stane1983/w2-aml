@@ -38,6 +38,7 @@
 #include "aml_task.h"
 #include "aml_tcp_ack.h"
 #include <linux/wireless.h>
+#include <linux/amlogic/pm.h>
 
 #define WPI_HDR_LEN    18
 #define WPI_PN_LEN     16
@@ -650,6 +651,7 @@ struct aml_roc {
     bool internal;
     bool on_chan;
     int tx_cnt;
+    u64 start_time;
     u64 tx_cookie[NX_ROC_TX];
 };
 
@@ -749,6 +751,23 @@ struct assoc_info {
     u8 addr[ETH_ALEN];
     u16 htcap;
 };
+
+#ifdef CONFIG_AML_APF
+
+/**
+ * struct apf_param - Structure for Android Packet Filter (APF) parameters
+ * @apf_set: Flag indicating whether an APF filter is currently set
+ * @apf_program: Pointer to the APF filter program buffer
+ * @apf_cap: Structure containing APF capabilities
+ */
+struct apf_param {
+    bool apf_set;
+    struct apf_get_status_req apf_info;
+    struct apf_capabilities apf_cap;
+    u32 program_len;
+};
+
+#endif
 
 /**
  * struct aml_hw - AML driver main data
@@ -1058,6 +1077,10 @@ struct aml_hw {
     bool wfd_present;
     u8 trace_mode;
     uint64_t pno_scan_reqid;
+#ifdef CONFIG_AML_APF
+    struct early_suspend wifi_early_suspend;
+    struct apf_param apf_params;
+#endif
 };
 
 u8 *aml_build_bcn(struct aml_bcn *bcn, struct cfg80211_beacon_data *new);
