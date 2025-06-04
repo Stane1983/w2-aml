@@ -2097,7 +2097,7 @@ static inline int aml_coex_get_status_ind(struct aml_hw *aml_hw,
 {
     struct coex_get_status *ind = (struct coex_get_status *)msg->param;
     int wifi_act_sum = 0;
-    int wifi_intact_sum = 0;
+    int wifi_inactive_sum = 0;
     int time_sum = 0;
     int ratio = 0;
 
@@ -2108,15 +2108,15 @@ static inline int aml_coex_get_status_ind(struct aml_hw *aml_hw,
         if (ind->wifi_act_sum > 0)
         {
             wifi_act_sum = (ind->wifi_act_sum) / 1000;
-            wifi_intact_sum = (ind->wifi_intact_sum) / 1000;
-            time_sum = wifi_act_sum + wifi_intact_sum;
+            wifi_inactive_sum = (ind->wifi_inactive_sum) / 1000;
+            time_sum = wifi_act_sum + wifi_inactive_sum;
         }
         if (wifi_act_sum > 0)
         {
             ratio = (wifi_act_sum * 100) / time_sum;
         }
         AML_INFO("coex work on TDD, work mode: %x; \n", ind->work_mode);
-        AML_INFO("In %dms; wifi_time: %dms; bt_time: %dms; wifi ratio: %d%%\n", time_sum, wifi_act_sum, wifi_intact_sum, ratio);
+        AML_INFO("In %dms; wifi_time: %dms; bt_time: %dms; wifi ratio: %d%%\n", time_sum, wifi_act_sum, wifi_inactive_sum, ratio);
     }
     else
     {

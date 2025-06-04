@@ -3119,7 +3119,7 @@ struct coex_get_status
     u8_l tx_agg_num; //the tx agg num coex setting;
     u8_l rx_agg_num; //the rx agg num coex setting;
     u32_l bt_work_status; // bt connect info;
-    u32_l wifi_intact_sum;
+    u32_l wifi_inactive_sum;
     u32_l wifi_act_sum;
     u8_l poc_cali_status;
     u8_l link_cali_status;

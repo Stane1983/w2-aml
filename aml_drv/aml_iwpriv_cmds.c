@@ -701,6 +701,50 @@ static int aml_send_twt_req(struct net_device *dev, char *str_param, union iwreq
     return aml_send_twt_request(aml_hw, setup_type, vif_idx, &twt_conf, &twt_setup_cfm);
 }
 
+static int aml_set_reg_legacy(struct net_device *dev, char *str_param,
+    union iwreq_data *wrqu, char *extra)
+{
+    int set0 = 0;
+    int set1 = 0;
+    int set2 = 0;
+    int set3 = 0;
+    int legacy_set1 = 0;
+    int legacy_set2 = 0;
+
+    if (sscanf(str_param, "%08x %08x %08x %08x", &set0, &set1, &set2, &set3) != 4) {
+        AML_ERR("param error \n");
+    }
+
+    legacy_set1 = set1 | set0 << 16;
+    legacy_set2 = set3 | set2 << 16;
+    AML_INFO("%08x %08x %08x %08x, legacy_set1 %08x, legacy_set2 %08x", set0, set1, set2, set3, legacy_set1, legacy_set2);
+    aml_set_reg(dev, legacy_set1, legacy_set2);
+
+    return 0;
+}
+
+static int aml_set_rf_reg_legacy(struct net_device *dev, char *str_param,
+    union iwreq_data *wrqu, char *extra)
+{
+    int set0 = 0;
+    int set1 = 0;
+    int set2 = 0;
+    int set3 = 0;
+    int legacy_set1 = 0;
+    int legacy_set2 = 0;
+
+    if (sscanf(str_param, "%08x %08x %08x %08x", &set0, &set1, &set2, &set3) != 4) {
+        AML_ERR("param error \n");
+    }
+
+    legacy_set1 = set1 | set0 << 16;
+    legacy_set2 = set3 | set2 << 16;
+    AML_INFO("%08x %08x %08x %08x, legacy_set1 %08x, legacy_set2 %08x", set0, set1, set2, set3, legacy_set1, legacy_set2);
+    aml_rf_reg_write(dev, legacy_set1, legacy_set2);
+
+    return 0;
+}
+
 void aml_print_buf(char *buf, int len)
 {
     char tmp[PRINT_BUF_SIZE] = {0};
@@ -5137,6 +5181,7 @@ static int aml_iwpriv_send_para2(struct net_device *dev,
     int sub_cmd = param[0];
     int set1 = param[1];
     int set2 = param[2];
+    uint8_t buf[1024] = {0};
 
     AML_INFO("cmd:%d set1:%d set2:%d\n", sub_cmd, set1, set2);
 
@@ -5145,9 +5190,29 @@ static int aml_iwpriv_send_para2(struct net_device *dev,
             aml_set_legacy_rate(dev, set1, set2);
             break;
         case AML_IWP_SET_RF_REG:
+            if ((set1 == 0x7fffffff) || (set2 == 0x7fffffff)) {
+                scnprintf(buf, 1024,
+                    "*************************************************************************************************************\n"
+                    "* You are using a legacy iwpriv tool, strongly suggest using a latest iwpriv tool                           *\n"
+                    "* You also can using the legacy tool as below:                                                              *\n"
+                    "* iwpriv wlan0 set_reg 0xff000c80 0xff000c80 -> iwpriv wlan0 set_rf_reg_leg \"0xff00 0x0c80 0xff00 0x0c80\"   *\n"
+                    "*************************************************************************************************************\n");
+                AML_INFO("\n%s\n", buf);
+                break;
+            }
             aml_rf_reg_write(dev, set1, set2);
             break;
         case AML_IWP_SET_REG:
+            if ((set1 == 0x7fffffff) || (set2 == 0x7fffffff)) {
+                scnprintf(buf, 1024,
+                    "*************************************************************************************************************\n"
+                    "* You are using a legacy iwpriv tool, strongly suggest using a latest iwpriv tool                           *\n"
+                    "* You also can using the legacy tool as below:                                                              *\n"
+                    "* iwpriv wlan0 set_reg 0xff000c80 0xff000c80 -> iwpriv wlan0 set_reg_legacy \"0xff00 0x0c80 0xff00 0x0c80\"   *\n"
+                    "*************************************************************************************************************\n");
+                AML_INFO("\n%s\n", buf);
+                break;
+            }
             aml_set_reg(dev, set1, set2);
             break;
         case AML_IWP_SET_EFUSE:
@@ -5455,6 +5520,13 @@ static int aml_iwpriv_get_char(struct net_device *dev,
         case AML_IWP_LOG_LEVELS:
             wrqu->data.length = aml_log_levels_set(set, extra);
             break;
+        case AML_IWP_LEGACY_SET_REG:
+            aml_set_reg_legacy(dev, set, wrqu, extra);
+            break;
+        case AML_IWP_LEGACY_SET_RF_REG:
+            aml_set_rf_reg_legacy(dev, set, wrqu, extra);
+            break;
+
         default:
             break;
     }
@@ -6046,6 +6118,12 @@ static const struct iw_priv_args aml_iwpriv_private_args[] = {
     {
         AML_IWP_SEND_TWT_SETUP_REQ,
         IW_PRIV_TYPE_CHAR | IW_PRIV_SIZE_MASK, IW_PRIV_TYPE_CHAR | IW_PRIV_SIZE_MASK, "send_twt_req"},
+    {
+        AML_IWP_LEGACY_SET_REG,
+        IW_PRIV_TYPE_CHAR | IW_PRIV_SIZE_MASK, IW_PRIV_TYPE_CHAR | IW_PRIV_SIZE_MASK, "set_reg_legacy"},
+    {
+        AML_IWP_LEGACY_SET_RF_REG,
+        IW_PRIV_TYPE_CHAR | IW_PRIV_SIZE_MASK, IW_PRIV_TYPE_CHAR | IW_PRIV_SIZE_MASK, "set_rf_reg_leg"},
     {
         AML_IWP_GET_EFUSE,
         IW_PRIV_TYPE_CHAR | IW_PRIV_SIZE_MASK, IW_PRIV_TYPE_CHAR | IW_PRIV_SIZE_MASK, "get_efuse"},

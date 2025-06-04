@@ -5371,7 +5371,9 @@ static bool aml_ps_wow_flush_tx(struct aml_hw *aml_hw)
 static int aml_ps_flush_roc(struct aml_hw *aml_hw)
 {
     int ret;
-    int count = 0;
+    u64 start_time_ns;
+    u64 elapsed_time_ns = 0;
+    u64 wait_time_ns = 1000000000; // 1s
 
     spin_lock_bh(&aml_hw->roc_lock);
     if (aml_hw->roc) {
@@ -5382,14 +5384,17 @@ static int aml_ps_flush_roc(struct aml_hw *aml_hw)
             return ret;
         }
         spin_lock_bh(&aml_hw->roc_lock);
-        while (aml_hw->roc) {
+        start_time_ns = sched_clock();
+        while (aml_hw->roc && (elapsed_time_ns < wait_time_ns)) {
+            elapsed_time_ns = sched_clock() - start_time_ns;
             spin_unlock_bh(&aml_hw->roc_lock);
             msleep(10);
-            if (count++ > 200) {
-                AML_INFO("cancel roc fail \n");
-                return -1;
-            }
             spin_lock_bh(&aml_hw->roc_lock);
+        }
+        if (elapsed_time_ns >= wait_time_ns) {
+             spin_unlock_bh(&aml_hw->roc_lock);
+             AML_INFO("cancel roc fail \n");
+             return -1;
         }
     }
     spin_unlock_bh(&aml_hw->roc_lock);
@@ -5424,9 +5429,20 @@ static int aml_ps_wow_suspend_check(struct aml_hw *aml_hw)
 {
     struct aml_vif *aml_vif;
 
-    if (aml_hw->state == WIFI_SUSPEND_STATE_WOW) {
-        AML_INFO("wifi driver suspend state is WOW\n");
-        return -EBUSY;
+    u64 start_time_ns;
+    u64 elapsed_time_ns = 0;
+    u64 wait_none_time_ns = 1000000000; // 1s
+
+    start_time_ns = sched_clock();
+    while ((aml_hw->state == WIFI_SUSPEND_STATE_WOW) && (elapsed_time_ns < wait_none_time_ns)) {
+        elapsed_time_ns = sched_clock() - start_time_ns;
+        msleep(10);
+    }
+
+    if (elapsed_time_ns >= wait_none_time_ns)
+    {
+         AML_INFO("wifi driver suspend state is WOW\n");
+         return -EBUSY;
     }
     list_for_each_entry(aml_vif, &aml_hw->vifs, list) {
         if (!aml_vif->up || aml_vif->ndev == NULL) {
@@ -5435,7 +5451,7 @@ static int aml_ps_wow_suspend_check(struct aml_hw *aml_hw)
         if (AML_VIF_TYPE(aml_vif) == NL80211_IFTYPE_STATION ||
             AML_VIF_TYPE(aml_vif) == NL80211_IFTYPE_P2P_CLIENT) {
             if (aml_connect_flags_chk(aml_vif, AML_CONNECTING | AML_GETTING_IP)) {
-                AML_INFO("sta is connecting ap or getting ip\n");
+                AML_INFO("sta is connecting ap or getting ip:%x\n",aml_vif->sta.connect_flags);
                 return -EBUSY;
             }
         }
@@ -5673,7 +5689,9 @@ static int aml_cfg80211_resume(struct wiphy *wiphy)
 #ifdef CONFIG_AML_SUSPEND
     struct aml_hw *aml_hw = wiphy_priv(wiphy);
     int error = 0;
-    int cnt = 0;
+    u64 start_time_ns;
+    u64 elapsed_time_ns = 0;
+    u64 wait_time_ns = 500000000; // 500ms
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
     int ret;
 #endif
@@ -5693,17 +5711,18 @@ static int aml_cfg80211_resume(struct wiphy *wiphy)
         AML_INFO("alloc irq:%d, ret:%d\n", aml_hw->plat->pci_dev->irq, ret);
     }
 #endif
+    start_time_ns = sched_clock();
 
-    while (atomic_read(&g_wifi_pm.bus_suspend_cnt) > 0)
+    while ((atomic_read(&g_wifi_pm.bus_suspend_cnt) > 0) && (elapsed_time_ns < wait_time_ns))
     {
        msleep(10);
-       cnt++;
-       if (cnt > 200)
-       {
-           AML_INFO("no resume cnt 0x%x\n",
-                   atomic_read(&g_wifi_pm.bus_suspend_cnt));
-           break;
-       }
+       elapsed_time_ns = sched_clock() - start_time_ns;
+    }
+
+    if (elapsed_time_ns >= wait_time_ns)
+    {
+       AML_INFO("no resume cnt 0x%x\n",
+               atomic_read(&g_wifi_pm.bus_suspend_cnt));
     }
 
     if ((atomic_read(&g_wifi_pm.bus_suspend_cnt) > 0) && (aml_bus_type == USB_MODE)) {
@@ -6231,51 +6250,41 @@ static int aml_get_cali_param(struct aml_hw *aml_hw, struct Cali_Param *cali_par
     int ret = 0, len = 0, i = 0;
     unsigned int product_id = 0, vendor_sn = 0;
     unsigned char vendor_rf[128];
-    unsigned int second_calibrationed = 0;
 
     product_id = aml_efuse_read(aml_hw, 0x0);
     product_id = (product_id & 0xffff0000) >> 16;
     vendor_sn = aml_efuse_read(aml_hw, 0xf);
     vendor_sn = vendor_sn & 0xffff;
-    second_calibrationed = aml_efuse_read(aml_hw, 0x7);
-    second_calibrationed = (second_calibrationed & 0x80000000) >> 31;
 
-    if (second_calibrationed == 0) {
-        if (calib_path != 0) {
-            sprintf(vendor_rf, "aml_w2_rf_%04x_%04x_%d.txt", product_id, vendor_sn, calib_path);
-        } else {
-            sprintf(vendor_rf, "aml_w2_rf_%04x_%04x.txt", product_id, vendor_sn);
-        }
+    if (calib_path != 0) {
+        sprintf(vendor_rf, "aml_w2_rf_%04x_%04x_%d.txt", product_id, vendor_sn, calib_path);
     } else {
-        /* if secondary calibration is performed, use the default txt directly */
-        sprintf(vendor_rf, WIFI_CALI_FILENAME);
+        sprintf(vendor_rf, "aml_w2_rf_%04x_%04x.txt", product_id, vendor_sn);
     }
     ret = request_firmware(&cfg_fw, vendor_rf, aml_hw->dev);
 
     if (ret != 0) {
-        if (second_calibrationed == 0) {
-          if (calib_path != 0) {
+        if (calib_path != 0) {
             sprintf(vendor_rf, "aml_w2_rf_%04x_%04x.txt", product_id, vendor_sn);
             ret = request_firmware(&cfg_fw, vendor_rf, aml_hw->dev);
-          }
-          if (ret != 0) {
-            /* if no second_calibrationed and no specific txt then use default */
+        }
+
+        if (ret != 0) {
+            /* if no specific txt then use default */
             AML_INFO("vendor customized %s not existed, use default", vendor_rf);
             ret = request_firmware(&cfg_fw, WIFI_CALI_FILENAME, aml_hw->dev);
-          }
         }
+
         if  (ret != 0) {
             AML_INFO("failed to get %s (%d)", WIFI_CALI_FILENAME, ret);
             return ret;
         }
     } else {
-        if (second_calibrationed == 0) {
-            AML_INFO("vendor customized %s config loaded:", vendor_rf);
-            AML_INFO("product id:%s, vendor sn:%s ver:%02x",
-                    aml_product_id2str(product_id),
-                    aml_vendor_sn2str(vendor_sn),
-                    vendor_sn & 0xff);
-        }
+        AML_INFO("vendor customized %s config loaded:", vendor_rf);
+        AML_INFO("product id:%s, vendor sn:%s ver:%02x",
+                aml_product_id2str(product_id),
+                aml_vendor_sn2str(vendor_sn),
+                vendor_sn & 0xff);
     }
 
     len = aml_process_cali_content((char *)cfg_fw->data, cfg_fw->size);

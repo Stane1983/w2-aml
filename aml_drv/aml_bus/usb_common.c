@@ -69,68 +69,76 @@ static void auc_disconnect(struct usb_interface *interface)
     g_usb_after_probe = 0;
     atomic_set(&g_wifi_pm.bus_suspend_cnt, 0);
     atomic_set(&g_wifi_pm.drv_suspend_cnt, 0);
-    PRINT("--------aml_usb:disconnect-------\n");
+    AML_INFO("--------aml_usb:disconnect-------\n");
 }
 
 #ifdef CONFIG_PM
 static int auc_reset_resume(struct usb_interface *interface)
 {
     atomic_set(&g_wifi_pm.bus_suspend_cnt, 0);
-    PRINT("--------aml_usb:reset done-------\n");
+    AML_INFO("--------aml_usb:reset done-------\n");
     return 0;
 }
 
 static int auc_suspend(struct usb_interface *interface,pm_message_t state)
 {
-    int cnt = 0;
-     PRINT("auc_suspend!! \n");
+    u64 start_time_ns;
+    u64 elapsed_time_ns = 0;
+    u64 wait_bt_time_ns = 8000000000; //wait bt 8s
+    u64 wait_wifi_time_ns = 12000000000; //wait wifi 12s
+
+    AML_INFO("auc_suspend!! \n");
 
     //bt open
     if ((auc_read_word_by_ep_for_bt(RG_BT_PMU_A16, USB_EP1) & BIT(31)))
     {
+        start_time_ns = sched_clock();
         //bt drv suspend set bit25
         while ((auc_read_word_by_ep_for_bt(RG_AON_A24, USB_EP1) & BIT(25)) &&
                 (bus_state_detect.bus_err == 0) &&
-                (bus_state_detect.is_recy_ongoing == 0))
+                (bus_state_detect.is_recy_ongoing == 0) &&
+                (elapsed_time_ns < wait_bt_time_ns))
         {
-            msleep(50);
-            cnt++;
-            if (cnt > 1000)
-            {
-                PRINT("bt drv suspend fail \n");
-                break;
-            }
+            elapsed_time_ns = sched_clock() - start_time_ns;
+            msleep(10);
+        }
+
+        if (elapsed_time_ns >= wait_bt_time_ns)
+        {
+            AML_INFO("bt suspend fail, return\n");
         }
 
         // Detect a bus error or ongoing recovery,
         // exit immediately to prevent blocking the kernel USB resume call.
         if (bus_state_detect.bus_err || bus_state_detect.is_recy_ongoing)
         {
-            PRINT("Detect a bus error or ongoing recovery, return\n");
+            AML_INFO("Detect a bus error or ongoing recovery, return\n");
             return 0;
         }
-
     }
 
-    cnt = 0;
+    elapsed_time_ns = 0;
     if (atomic_read(&g_wifi_pm.wifi_enable))
     {
+        start_time_ns = sched_clock();
         while ((atomic_read(&g_wifi_pm.drv_suspend_cnt) == 0) &&
                 (bus_state_detect.bus_err == 0) &&
                 (bus_state_detect.is_recy_ongoing == 0) &&
-                (atomic_read(&g_wifi_pm.wifi_suspend_state) == 0))
+                (atomic_read(&g_wifi_pm.wifi_suspend_state) == 0) &&
+                (elapsed_time_ns < wait_wifi_time_ns))
         {
-            msleep(50);
-            cnt++;
-            if (cnt > 1000)
-            {
-                PRINT("wifi suspend fail \n");
-                break;
-            }
+            elapsed_time_ns = sched_clock() - start_time_ns;
+            msleep(10);
         }
+
+        if (elapsed_time_ns >= wait_wifi_time_ns)
+        {
+            AML_INFO("wifi suspend fail, return\n");
+        }
+
         if (atomic_read(&g_wifi_pm.wifi_suspend_state) != 0)
         {
-            PRINT("Detect wifi suspend fail, return %d\n", __LINE__);
+            AML_INFO("Detect wifi suspend fail\n");
             return 0;
         }
 
@@ -138,19 +146,19 @@ static int auc_suspend(struct usb_interface *interface,pm_message_t state)
         // exit immediately to prevent blocking the kernel USB resume call.
         if (bus_state_detect.bus_err || bus_state_detect.is_recy_ongoing)
         {
-            PRINT("Detect a bus error or ongoing recovery, return\n");
+            AML_INFO("Detect a bus error or ongoing recovery, return\n");
             return 0;
         }
     }
 
     atomic_set(&g_wifi_pm.bus_suspend_cnt, 1);
-    PRINT("---------aml_usb suspend-------\n");
+    AML_INFO("---------aml_usb suspend-------\n");
     return 0;
 }
 
 static int auc_resume(struct usb_interface *interface)
 {
-    PRINT("auc_resume!! \n");
+    AML_INFO("auc_resume!! \n");
 
     atomic_set(&g_wifi_pm.bus_suspend_cnt, 0);
     return 0;
