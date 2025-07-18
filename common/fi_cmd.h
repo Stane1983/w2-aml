@@ -734,4 +734,44 @@ typedef union FI_CMDFIFO_PARAM
     struct PagelenCmd page_len_cmd;
 } FI_CMDFIFO_PARAM;
 
+typedef struct phy_maskfilter_cfg_param
+{
+    uint32_t maskfilter[32];
+    uint32_t mask_bw_cfg[5];
+} phy_maskfilter_cfg_param_t;
+
+typedef struct COUNTRY_PWR_LIMIT_CFG
+{
+    unsigned char version;
+    unsigned char country_pwr_limit_en;
+
+    //2.4G
+    unsigned char wf2g_ofdm_limit[14][5];
+    unsigned char wf2g_dsss_limit[14][5];
+
+    //5G 20M band0 ch36~ch64
+    unsigned char wf5g_bw20_band0[8][5];
+    //5G 20M band1 ch100~ch144
+    unsigned char wf5g_bw20_band1[12][5];
+    //5G 20M band2 ch149~ch165
+    unsigned char wf5g_bw20_band2[8][5];
+
+    //5G 40M band0 ch38~ch62
+    unsigned char wf5g_bw40_band0[4][5];
+    //5G 40M band1 ch102~ch142
+    unsigned char wf5g_bw40_band1[6][5];
+    //5G 40M band2 ch151~ch175
+    unsigned char wf5g_bw40_band2[4][5];
+
+    //5G 80M band0 ch42~ch58
+    unsigned char wf5g_bw80_band0[2][5];
+    //5G 80M band1 ch106~ch138
+    unsigned char wf5g_bw80_band1[3][5];
+    //5G 80M band3 ch155
+    unsigned char wf5g_bw80_band2[1][5];
+
+    //maskfilters
+    phy_maskfilter_cfg_param_t phy_maskfilter_cfg[2];
+} COUNTRY_PWR_LIMIT_CFG;
+
 #endif

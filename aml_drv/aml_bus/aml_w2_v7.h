@@ -62,8 +62,8 @@ struct aml_plat_pci {
 #define ATR_TABLE_SIZE  0x20
 
 
-#define BAR2_TABLE_NUM 0x4
-#define BAR4_TABLE_NUM 0x6
+#define BAR2_TABLE_NUM 0x6
+#define BAR4_TABLE_NUM 0x8
 #define PCIE_TABLE_NUM (BAR2_TABLE_NUM + BAR4_TABLE_NUM)
 
 // PCIE BAR TABLE OFFSET

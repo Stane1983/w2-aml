@@ -485,4 +485,9 @@ struct mac_ftm_results
     } meas[FTM_RSP_MAX];
 };
 
+struct fwlog_mode_cfm {
+    unsigned int trace_buf;
+    unsigned int end;
+};
+
 #endif // LMAC_MAC_H_
